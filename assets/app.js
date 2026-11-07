@@ -8,7 +8,6 @@
   const C = window.APP_CONFIG;
   const $app = document.getElementById('app');
   const WEEK = ['일', '월', '화', '수', '목', '금', '토'];
-  const DAY_MS = 86400000;
 
   /* ─── 도우미 ─────────────────────────────── */
   const esc = (s) =>
@@ -604,7 +603,7 @@
       </div>`;
   }
 
-  /* ─── 명단·작성 순번 ─────────────────────── */
+  /* ─── 명단 ──────────────────────────── */
   const getRoster = () => store.get('roster', []);
   // 부서별 명단 (Cloudflare 환경 변수 ROSTERS → 로그인한 회원만 받음, 기기에 저장 안 함)
   async function loadRosters() {
@@ -614,16 +613,6 @@
       state.rosters = r.status === 'ok' && r.result && typeof r.result === 'object' ? r.result : {};
     }
     return state.rosters;
-  }
-  const getDuty = () => store.get('duty', { order: [], start: '' });
-  function dutyFor(date) {
-    const { order, start } = getDuty();
-    const list = order.length ? order : getRoster();
-    if (!list.length) return '';
-    const s = parseDate(start);
-    if (!s) return list[0];
-    const w = Math.floor((date - s) / (7 * DAY_MS));
-    return list[((w % list.length) + list.length) % list.length];
   }
 
   /* ─── 사진 축소 ──────────────────────────── */
@@ -651,7 +640,7 @@
     if (location.hash.replace(/^#\/?/, '') !== 'write') return;
     const depts = Object.keys(rosters).filter((k) => rosters[k].length);
     const today = new Date();
-    const draft = store.get('draft', null) || { date: ymd(today), writer: dutyFor(today), people: [], extra: '', verse: '', verseNote: '', share: '', prayers: {}, bungae: '' };
+    const draft = store.get('draft', null) || { date: ymd(today), writer: auth.me?.name || "", people: [], extra: '', verse: '', verseNote: '', share: '', prayers: {}, bungae: '' };
     let dept = depts.includes(draft.dept) ? draft.dept : (depts.includes(store.get('lastDept', '')) ? store.get('lastDept', '') : (depts[0] || ''));
     const rosterOf = (d) => (d && rosters[d]) || getRoster();
     const roster = rosterOf(dept);
@@ -661,7 +650,6 @@
     $app.innerHTML = `
       <div class="page-head"><h1>교제록 작성</h1><p>양식대로 쓰고, 게시판에 바로 올리거나 복사해서 붙여넣어요</p></div>
       ${depts.length || roster.length ? '' : `<div class="notice"><span>👥</span><div><b>부서 명단이 아직 없어요</b><br>${auth.hash ? '부서별 명단이 등록되면 여기서 참석자를 고를 수 있어요. 그 전에는 아래 칸에 이름을 직접 적어 주세요.' : '<a href="#/settings">로그인</a>하면 부서 명단에서 참석자를 고를 수 있어요.'}</div></div>`}
-      <div class="duty"><div>이번 주 작성 담당 <b id="dutyName">${esc(dutyFor(parseDate(draft.date) || today) || '—')}</b></div><span class="small muted">다음 주: ${esc(dutyFor(new Date((parseDate(draft.date) || today).getTime() + 7 * DAY_MS)) || '—')}</span></div>
       <form class="card form-card" id="f" autocomplete="off">
         ${depts.length ? `<div class="field"><span>부서</span><div class="chips" id="deptPick" style="margin:0">${depts.map((d) => `<button type="button" class="chip" data-d="${esc(d)}" aria-pressed="${d === dept}">${esc(d)}</button>`).join('')}</div></div>` : ''}
         <div class="grid-2">
@@ -760,8 +748,6 @@
       const d = read();
       drawPrayers(d.all);
       document.getElementById('pc').textContent = d.all.length ? `${d.all.length}명` : '';
-      const dt = parseDate(d.date);
-      if (dt) document.getElementById('dutyName').textContent = dutyFor(dt) || '—';
       document.getElementById('preview').innerHTML = `<p><b>${esc(titleOf(d))}</b></p><p><br></p>` + toHtml(d);
       const { all, ...save } = d;
       store.set('draft', save);
@@ -891,7 +877,6 @@
   async function viewSettings() {
     syncNav();
     const roster = getRoster();
-    const duty = getDuty();
     const B = C.board;
     const SAMPLES = {
       board_post: { ...B.listParams, [B.pageParam]: 1, [B.limitParam]: 5 },
@@ -903,7 +888,7 @@
     const defaultParams = sampleJson('board_post');
     const me = auth.me;
     $app.innerHTML = `
-      <div class="page-head"><h1>설정</h1><p>명단과 작성 순번은 이 기기에만 저장돼요</p></div>
+      <div class="page-head"><h1>설정</h1><p>명단은 이 기기에만 저장돼요</p></div>
       <div class="stack">
         <section class="card stack" id="loginCard">
           <h2 class="month" style="margin:0">깨사모 로그인</h2>
@@ -921,17 +906,9 @@
         </section>
         <section class="card stack">
           <h2 class="month" style="margin:0">이 기기 명단</h2>
-          <p class="small muted" style="margin:0">한 줄에 한 명씩. 부서 명단이 등록되기 전에만 작성 화면의 참석자 목록으로 쓰여요. 작성 담당 순번에도 쓰여요.</p>
+          <p class="small muted" style="margin:0">한 줄에 한 명씩. 부서 명단이 등록되기 전에만 작성 화면의 참석자 목록으로 쓰여요.</p>
           <textarea class="textarea" id="roster" rows="8" placeholder="김가람&#10;이나래&#10;박한결">${esc(roster.join('\n'))}</textarea>
           <div class="btn-row"><button class="btn btn--primary" id="saveRoster">명단 저장</button><button class="btn" id="fromPosts">교제록에서 이름 가져오기</button></div>
-        </section>
-        <section class="card stack">
-          <h2 class="month" style="margin:0">작성 담당 순번</h2>
-          <p class="small muted" style="margin:0">돌아가며 쓸 순서대로 한 줄에 한 명씩. 비워두면 명단 순서를 따라요. 시작 날짜에 첫 번째 사람이 담당이고, 매주 다음 사람으로 넘어갑니다.</p>
-          <textarea class="textarea" id="order" rows="6">${esc(duty.order.join('\n'))}</textarea>
-          <label class="field"><span>시작 날짜</span><input class="input" type="date" id="start" value="${esc(duty.start)}"></label>
-          <div class="btn-row"><button class="btn btn--primary" id="saveDuty">순번 저장</button></div>
-          <p class="small" id="dutyPreview" style="margin:0"></p>
         </section>
         <section class="card stack">
           <h2 class="month" style="margin:0">API 연결 확인</h2>
@@ -951,31 +928,15 @@
       </div>`;
 
     const lines = (id) => document.getElementById(id).value.split('\n').map((s) => s.trim()).filter(Boolean);
-    const drawDutyPreview = () => {
-      const now = new Date();
-      const next = [0, 1, 2, 3].map((i) => {
-        const d = new Date(now.getTime() + i * 7 * DAY_MS);
-        return `${d.getMonth() + 1}/${d.getDate()} ${esc(dutyFor(d) || '—')}`;
-      });
-      document.getElementById('dutyPreview').innerHTML = `<span class="muted">앞으로 4주:</span> ${next.join(' · ')}`;
-    };
-    drawDutyPreview();
-
     document.getElementById('saveRoster').onclick = () => {
       store.set('roster', [...new Set(lines('roster'))]);
       toast('명단을 저장했어요');
-      drawDutyPreview();
     };
     document.getElementById('fromPosts').onclick = async () => {
       const posts = await loadPosts();
       const names = [...new Set([...lines('roster'), ...posts.flatMap((p) => p.people)])];
       document.getElementById('roster').value = names.join('\n');
       toast(`${names.length}명을 채웠어요. 확인 후 저장을 눌러주세요`);
-    };
-    document.getElementById('saveDuty').onclick = () => {
-      store.set('duty', { order: lines('order'), start: document.getElementById('start').value });
-      toast('순번을 저장했어요');
-      drawDutyPreview();
     };
     document.getElementById('api').onchange = (e) => {
       document.getElementById('params').value = sampleJson(e.target.value);

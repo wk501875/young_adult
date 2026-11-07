@@ -562,7 +562,7 @@
     $app.innerHTML = `
       <div class="stories" id="stories" aria-label="부서">${'<div class="story story--sk"><span class="sk"></span></div>'.repeat(4)}</div>
       <section class="card welcome">
-        <h1 class="welcome__title">${esc(me?.name ? `${me.name}님, 반가워요` : '반가워요')}</h1>
+        <h1 class="welcome__title">이번 주 교제</h1>
         <p class="welcome__sub" id="welcomeSub">이번 주 교제록을 불러오는 중이에요</p>
         <a class="composer" href="#/write">
           ${avatar(me?.name)}
@@ -617,7 +617,7 @@
     const fresh = posts.filter(isNew).length;
     document.getElementById('welcomeSub').innerHTML = thisWeek
       ? `이번 주에 교제록 <b>${thisWeek}개</b>가 올라왔어요${fresh ? ` · 새 글 <b>${fresh}개</b>` : ''}`
-      : '이번 주엔 아직 교제록이 없어요. 첫 교제록을 남겨 볼까요?';
+      : '이번 주엔 아직 올라온 교제록이 없어요';
 
     // 부서 카드 줄 (각 부서 최근 사진)
     const depts = [...new Set(posts.map((p) => p.dept))];
@@ -2056,7 +2056,7 @@
       if (!on && !(await confirmSheet('참여를 취소할까요?', '취소해도 다시 "나도 갈래"를 누를 수 있어요.', '취소하기', 'danger'))) return;
       b.disabled = true; b.innerHTML = `${spinner}${on ? '참여하는 중' : '취소하는 중'}`;
       const res = await callApi('bg_join', { id, on });
-      if (res.status !== 'ok') toast(errText(res), { tone: 'error' }); else toast(on ? '참여했어요. 함께해요!' : '참여를 취소했어요');
+      if (res.status !== 'ok') toast(errText(res), { tone: 'error' }); else toast(on ? '참여했어요' : '참여를 취소했어요');
       viewMeetup(id);
     });
     document.getElementById('bgEdit')?.addEventListener('click', () => editMeetup(m));
@@ -2102,7 +2102,7 @@
         <ul class="cmts">${list.length ? list.map((x) => {
           const mine = x.userid === r.me.userid;
           return `<li class="${x.pending ? 'is-pending' : ''}">${avatar(x.name, '', 'sm')}<div class="cmt__body"><div class="cmt__head"><b>${esc(x.name)}</b><time>${x.pending ? '보내는 중' : esc(rel(x.at ? new Date(x.at) : null))}</time>${mine && !x.pending ? `<button type="button" class="cmt__del" data-del="${esc(x.cid)}" aria-label="내 댓글 지우기">${icon('trash')}</button>` : ''}</div><p>${esc(x.text)}</p></div></li>`;
-        }).join('') : '<li class="cmt__empty">"저도 갈게요!" 처럼 한마디 남겨 보세요</li>'}</ul>
+        }).join('') : '<li class="cmt__empty">"저도 갈게요" 처럼 한마디 남겨 보세요</li>'}</ul>
         <form class="cmt-form" id="bgCmtForm">${avatar(r.me.name, '', 'sm')}
           <div class="cmt-form__box"><textarea name="t" rows="1" maxlength="200" placeholder="댓글 남기기" aria-label="댓글"></textarea>
           <button class="cmt-form__send" type="submit" aria-label="댓글 등록" disabled>${icon('send')}</button></div></form>`;
@@ -2408,13 +2408,13 @@
     const emptyMsg = calR.status !== 'ok' ? '일정을 불러오지 못했어요' : sel ? '이 날은 일정이 없어요' : '이 달엔 남은 일정이 없어요';
     const latestPr = posts.find((p) => p.prayers.length);
     $p.innerHTML = `
-      <section class="promo">
+      ${draft ? `<section class="promo">
         <div class="promo__top">
-          <div><small>${draft ? '쓰다 만 교제록' : '이번 주 교제록'}</small><b>${draft ? `${draft.done}/${draft.total} 단계 채웠어요` : '아직 안 쓰셨다면'}</b></div>
-          ${draft ? `<div class="ring-wrap">${ring(draft.done, draft.total)}</div>` : ''}
+          <div><small>쓰다 만 교제록</small><b>${draft.done}/${draft.total} 단계 채웠어요</b></div>
+          <div class="ring-wrap">${ring(draft.done, draft.total)}</div>
         </div>
-        <a class="btn btn--light btn--sm" href="#/write">${draft ? '이어 쓰기' : '지금 쓰기'}</a>
-      </section>
+        <a class="btn btn--sm" href="#/write">이어 쓰기</a>
+      </section>` : ''}
       <section class="pblock card">
         <div class="cal__head">
           <b>${m.getFullYear()}년 ${m.getMonth() + 1}월</b>

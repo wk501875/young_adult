@@ -1,5 +1,5 @@
-/* 청년회 교제록 — 화면 동작
- * 구성: 모아보기(목록·상세·검색·월별) / 기도제목 / 참석 흐름 / 작성(복사해서 붙여넣기) / 설정
+/* 일산교회 청년회 — 화면 동작
+ * 구성: 교제록(목록·글·댓글) / 기도제목 / 쓰기 / 참석 흐름(관리자) / 내 정보
  * 청년회교제실(boardId 2122)은 회원 전용이라 깨사모 로그인(hash)이 있어야 실제 글이 옵니다.
  * 로그인 화면을 거쳐야 들어갈 수 있고, 불러오기에 실패하면 알림을 보여줍니다.
  */
@@ -20,14 +20,6 @@
     set(k, v) { try { localStorage.setItem('ya:' + k, JSON.stringify(v)); } catch { /* 저장 불가 환경 */ } },
     del(k) { try { localStorage.removeItem('ya:' + k); } catch { /* */ } },
   };
-  let toastTimer;
-  function toast(msg) {
-    const t = document.getElementById('toast');
-    t.textContent = msg;
-    t.classList.add('show');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
-  }
   const parseDate = (s) => {
     if (!s) return null;
     if (/^\d{10}$/.test(String(s))) return new Date(Number(s) * 1000);
@@ -53,7 +45,7 @@
     set(hash, me) { store.set('hash', hash); store.set('me', me); },
     clear() { store.del('hash'); store.del('me'); },
   };
-  const NO_HASH_APIS = ['login', 'board_comment'];
+  const NO_HASH_APIS = ['login', 'board_comment', 'schedule'];
   const isHashError = (r) => r && r.status !== 'ok' && /hash/i.test(String(r.result || ''));
 
   /* ─── API 중계 호출 ──────────────────────── */
@@ -194,6 +186,7 @@
       comments: Number(o.total_comment) || 0,
       likes: Number(o.total_good) || 0,
       hits: Number(o.hit) || 0,
+      createdAt: (() => { const t = Date.parse(String(o.created || '').replace(' ', 'T')); return Number.isFinite(t) ? t : 0; })(),
       // 앱 양식(■)으로 쓴 글만 칸별로 다시 그리고, 나머지는 원문을 그대로 보여줌
       structured: /■/.test(text) && Object.keys(sec).length >= 2,
     };
@@ -308,23 +301,202 @@
     return doc.body.innerHTML;
   }
 
-  const sampleNotice = () => (state.source === 'error'
-    ? `<div class="notice is-error"><span>⚠️</span><div><b>교제록을 불러오지 못했어요</b><br>${esc(state.error)}<div class="btn-row" style="margin-top:8px"><button class="btn btn--sm" onclick="location.reload()">다시 시도</button></div></div></div>`
-    : '');
-  const skeleton = () => `<div class="loading">${'<div class="skeleton"></div>'.repeat(4)}</div>`;
-  const progress = (label) => `<div class="loading-label" id="prog">${esc(label)}</div>${skeleton()}`;
-  const setProgress = (done, total) => {
-    const el = document.getElementById('prog');
-    if (el) el.textContent = `최근 교제록 읽는 중… ${done}/${total}`;
+
+  /* ════════════════════════════════════════════════════════════
+   * 화면 (UI)
+   * ════════════════════════════════════════════════════════════ */
+  const APP = C.appName || '일산교회 청년회';
+  const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const isWide = () => window.matchMedia('(min-width: 1180px)').matches;
+
+  /* ─── 아이콘 (선 아이콘, 24 격자) ─── */
+  const ICONS = {
+    book: '<path d="M3 5.5h5.5A3.5 3.5 0 0 1 12 9v10.5a3 3 0 0 0-3-3H3z"/><path d="M21 5.5h-5.5A3.5 3.5 0 0 0 12 9v10.5a3 3 0 0 1 3-3h6z"/>',
+    heart: '<path d="M12 20s-7.2-4.4-9.1-9A4.7 4.7 0 0 1 12 7.3 4.7 4.7 0 0 1 21.1 11c-1.9 4.6-9.1 9-9.1 9z"/>',
+    pen: '<path d="M4 20h4L19.2 8.8a2.8 2.8 0 0 0-4-4L4 16z"/><path d="m13.5 6.5 4 4"/>',
+    chart: '<path d="M4 20V11"/><path d="M10 20V5"/><path d="M16 20v-6"/><path d="M21 20H3"/>',
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0"/>',
+    search: '<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>',
+    x: '<path d="M6 6l12 12M18 6 6 18"/>',
+    left: '<path d="m15 18-6-6 6-6"/>',
+    right: '<path d="m9 18 6-6-6-6"/>',
+    users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8"/><path d="M18.2 14.2A6.5 6.5 0 0 1 21.5 20"/>',
+    msg: '<path d="M20.5 12a8.5 8.5 0 0 1-12.3 7.6L3.5 21l1.4-4.6A8.5 8.5 0 1 1 20.5 12z"/>',
+    image: '<rect x="3" y="4.5" width="18" height="15" rx="3"/><circle cx="8.8" cy="10" r="1.8"/><path d="m21 15.5-4.8-4.8L7 19.5"/>',
+    calendar: '<rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+    copy: '<rect x="8.5" y="8.5" width="12" height="12" rx="2.5"/><path d="M15.5 8.5V6a2.5 2.5 0 0 0-2.5-2.5H6A2.5 2.5 0 0 0 3.5 6v7A2.5 2.5 0 0 0 6 15.5h2.5"/>',
+    external: '<path d="M14 4h6v6"/><path d="M20 4 10.5 13.5"/><path d="M18.5 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7.5a2 2 0 0 1 2-2h4"/>',
+    logout: '<path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3"/><path d="m10 16.5-4.5-4.5L10 7.5"/><path d="M5.5 12H16"/>',
+    refresh: '<path d="M20 11.5A8 8 0 1 0 17.7 17"/><path d="M20 4.5v7h-7"/>',
+    alert: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.8v5"/><path d="M12 16.2v.1"/>',
+    lock: '<rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>',
+    check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/>',
+    trash: '<path d="M4.5 7h15"/><path d="M10 11v5.5M14 11v5.5"/><path d="m6.5 7 .9 12.2a1.5 1.5 0 0 0 1.5 1.3h6.2a1.5 1.5 0 0 0 1.5-1.3L17.5 7"/><path d="M9.5 7V4.5h5V7"/>',
+    send: '<path d="M20.5 3.5 10 14"/><path d="m20.5 3.5-6.5 17-4-6.5-6.5-4z"/>',
+    download: '<path d="M12 4v11"/><path d="m7.5 10.5 4.5 4.5 4.5-4.5"/><path d="M4.5 20h15"/>',
+    quote: '<path d="M10 7H6.5A2.5 2.5 0 0 0 4 9.5V12h5v5H4"/><path d="M20 7h-3.5A2.5 2.5 0 0 0 14 9.5V12h5v5h-5"/>',
+    clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+    pin: '<path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/>',
+    wifi: '<path d="M2.5 9a14 14 0 0 1 19 0"/><path d="M5.5 12.5a9.5 9.5 0 0 1 13 0"/><path d="M9 16a4.5 4.5 0 0 1 6 0"/><path d="M12 19.5v.1"/><path d="M3 3l18 18"/>',
   };
-  // 부서 칩 (순종부·사랑부·겸손부 …) — 글 제목의 [2026 순종부] 에서 읽음
+  const icon = (name, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
+  const spinner = '<span class="spin" aria-hidden="true"></span>';
+
+  /* ─── 작은 도우미 ─── */
+  const hashOf = (s) => { let h = 0; for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h; };
+  const tone = (s) => ['blue', 'sky', 'sun', 'green', 'rose'][hashOf(s) % 5];
+  function avatar(name, url, size = 'md') {
+    const n = String(name || '').trim();
+    const initial = esc(n ? (/^[가-힣]/.test(n) ? n[0] : n[0].toUpperCase()) : '·');
+    const img = /^https:\/\//.test(url || '')
+      ? `<img src="${esc(url)}" alt="" loading="lazy" onerror="this.remove()">` : '';
+    return `<span class="av av--${size} t-${tone(n)}" aria-hidden="true">${initial}${img}</span>`;
+  }
+  const tag = (dept) => (dept ? `<span class="tag t-${tone(dept)}">${esc(dept)}</span>` : '');
+  function rel(d) {
+    if (!d) return '';
+    const t = d instanceof Date ? d.getTime() : d;
+    const diff = Date.now() - t;
+    const day = new Date(t);
+    if (diff < 60e3) return '방금';
+    if (diff < 3600e3) return `${Math.floor(diff / 60e3)}분 전`;
+    if (diff < 86400e3) return `${Math.floor(diff / 3600e3)}시간 전`;
+    if (diff < 2 * 86400e3) return '어제';
+    if (diff < 7 * 86400e3) return `${Math.floor(diff / 86400e3)}일 전`;
+    return day.getFullYear() === new Date().getFullYear() ? `${day.getMonth() + 1}월 ${day.getDate()}일` : dotDate(day);
+  }
+  const fullDate = (d) => (d ? `${d.getMonth() + 1}월 ${d.getDate()}일 (${WEEK[d.getDay()]})` : '');
+  const errText = (r) => (typeof r?.result === 'string' && r.result ? r.result : '알 수 없는 오류');
+
+  // 지난번 방문 시각 — 그 뒤에 올라온 글에 "새 글" 표시
+  const prevSeen = store.get('seenAt', 0);
+  store.set('seenAt', Date.now());
+  const isNew = (p) => prevSeen && p.createdAt > prevSeen;
+
+  /* ─── 알림: 토스트 / 스낵바 (되돌리기 버튼) ─── */
+  let toastTimer;
+  function toast(msg, opt = {}) {
+    const t = document.getElementById('toast');
+    t.innerHTML = `<span>${esc(msg)}</span>${opt.action ? `<button type="button">${esc(opt.action.label)}</button>` : ''}`;
+    t.className = 'toast show' + (opt.tone === 'error' ? ' is-error' : '');
+    if (opt.action) t.querySelector('button').onclick = () => { t.classList.remove('show'); opt.action.onClick(); };
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove('show'), opt.action ? 5000 : 2400);
+  }
+
+  /* ─── 모달 / 바텀시트 (휴대폰에선 아래에서 올라오고, 컴퓨터에선 가운데) ─── */
+  function openSheet({ title = '', body = '', actions = [], dismissable = true } = {}) {
+    const layer = document.getElementById('layer');
+    const el = document.createElement('div');
+    el.className = 'sheet-wrap';
+    el.innerHTML = `
+      <div class="sheet-backdrop"></div>
+      <div class="sheet" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+        <div class="sheet__grip" aria-hidden="true"></div>
+        ${title ? `<h2 class="sheet__title">${esc(title)}</h2>` : ''}
+        <div class="sheet__body">${body}</div>
+        ${actions.length ? `<div class="sheet__actions">${actions.map((a, i) => `<button type="button" class="btn ${a.kind === 'primary' ? 'btn--primary' : a.kind === 'danger' ? 'btn--danger' : ''}" data-i="${i}">${a.icon ? icon(a.icon) : ''}${esc(a.label)}</button>`).join('')}</div>` : ''}
+      </div>`;
+    layer.appendChild(el);
+    const prevFocus = document.activeElement;
+    let resolve;
+    const result = new Promise((r) => { resolve = r; });
+    const close = (v = null) => {
+      if (!el.isConnected) return;
+      el.classList.remove('open');
+      document.removeEventListener('keydown', onKey);
+      setTimeout(() => el.remove(), reduceMotion() ? 0 : 200);
+      prevFocus?.focus?.();
+      resolve(v);
+    };
+    const onKey = (e) => { if (e.key === 'Escape' && dismissable) close(null); };
+    document.addEventListener('keydown', onKey);
+    if (dismissable) el.querySelector('.sheet-backdrop').onclick = () => close(null);
+    el.querySelectorAll('[data-i]').forEach((b) => { b.onclick = () => close(actions[Number(b.dataset.i)].value); });
+    requestAnimationFrame(() => {
+      el.classList.add('open');
+      (el.querySelector('.btn--primary, .btn--danger, [data-i]') || el.querySelector('.sheet'))?.focus?.();
+    });
+    return { el, result, close };
+  }
+  const confirmSheet = (title, body, okLabel, kind = 'primary') =>
+    openSheet({ title, body: `<p class="sheet__text">${body}</p>`, actions: [{ label: '취소', value: false }, { label: okLabel, value: true, kind }] }).result;
+
+  /* ─── 사진 크게 보기 ─── */
+  function lightbox(list, start = 0) {
+    let i = start;
+    const layer = document.getElementById('layer');
+    const el = document.createElement('div');
+    el.className = 'lb';
+    el.innerHTML = `
+      <button class="lb__close" type="button" aria-label="닫기">${icon('x')}</button>
+      <div class="lb__count"></div>
+      ${list.length > 1 ? `<button class="lb__nav lb__prev" type="button" aria-label="이전 사진">${icon('left')}</button><button class="lb__nav lb__next" type="button" aria-label="다음 사진">${icon('right')}</button>` : ''}
+      <img class="lb__img" alt="">`;
+    layer.appendChild(el);
+    const $img = el.querySelector('.lb__img');
+    const show = () => {
+      $img.classList.remove('loaded');
+      $img.onload = () => $img.classList.add('loaded');
+      $img.src = list[i];
+      el.querySelector('.lb__count').textContent = list.length > 1 ? `${i + 1} / ${list.length}` : '';
+    };
+    const go = (d) => { i = (i + d + list.length) % list.length; show(); };
+    const close = () => { document.removeEventListener('keydown', onKey); el.classList.remove('open'); setTimeout(() => el.remove(), 180); };
+    const onKey = (e) => { if (e.key === 'Escape') close(); if (e.key === 'ArrowLeft') go(-1); if (e.key === 'ArrowRight') go(1); };
+    document.addEventListener('keydown', onKey);
+    el.querySelector('.lb__close').onclick = close;
+    el.onclick = (e) => { if (e.target === el) close(); };
+    el.querySelector('.lb__prev')?.addEventListener('click', () => go(-1));
+    el.querySelector('.lb__next')?.addEventListener('click', () => go(1));
+    let x0 = null;
+    el.addEventListener('touchstart', (e) => { x0 = e.touches[0].clientX; }, { passive: true });
+    el.addEventListener('touchend', (e) => {
+      if (x0 == null) return;
+      const dx = e.changedTouches[0].clientX - x0;
+      if (Math.abs(dx) > 50 && list.length > 1) go(dx < 0 ? 1 : -1);
+      x0 = null;
+    });
+    show();
+    requestAnimationFrame(() => el.classList.add('open'));
+  }
+  // 사진이 다 내려오면 흐릿한 상태에서 또렷하게
+  const imgTag = (src, alt = '') => `<img src="${esc(src)}" alt="${esc(alt)}" loading="lazy" decoding="async" onload="this.classList.add('loaded')">`;
+
+  /* ─── 공통 조각 ─── */
+  const pageHead = (title, sub = '', right = '') =>
+    `<header class="page-head"><div><h1>${title}</h1>${sub ? `<p>${sub}</p>` : ''}</div>${right}</header>`;
+  const skeletonCards = (n = 4) => `<div class="feed" aria-busy="true">${Array.from({ length: n }, () => `
+    <div class="card sk-card"><div class="sk-row"><span class="sk sk-av"></span><span class="sk sk-line" style="width:32%"></span></div>
+    <span class="sk sk-line" style="width:72%;height:18px"></span><span class="sk sk-line"></span><span class="sk sk-line" style="width:56%"></span></div>`).join('')}</div>`;
+  function emptyState({ ic = 'search', title, desc = '', action = '' }) {
+    return `<div class="empty"><span class="empty__ic">${icon(ic)}</span><b>${title}</b>${desc ? `<p>${desc}</p>` : ''}${action}</div>`;
+  }
+  const errorState = () => emptyState({
+    ic: 'alert', title: '교제록을 불러오지 못했어요', desc: esc(state.error),
+    action: `<button class="btn btn--sm" type="button" data-retry>${icon('refresh')}다시 불러오기</button>`,
+  });
+  const progressBar = (id, label) => `<div class="prog" id="${id}"><div class="prog__label">${esc(label)}</div><div class="prog__bar"><i style="width:0%"></i></div></div>`;
+  function setProg(id, done, total, label) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.querySelector('i').style.width = `${total ? Math.round((done / total) * 100) : 100}%`;
+    el.querySelector('.prog__label').textContent = label;
+  }
+  document.addEventListener('click', async (e) => {
+    if (e.target.closest('[data-retry]')) { await loadPosts(true); route(); }
+  });
+
+  // 부서 칩 (순종부·사랑부 …) — 글 제목의 [2026 순종부] 에서 읽음
   function deptChips(posts, onChange) {
     const depts = [...new Set(posts.map((p) => p.dept))];
     if (depts.length < 2) return { html: '', bind() {} };
     const draw = () => [['', '전체'], ...depts.map((d) => [d, d])]
-      .map(([k, l]) => `<button class="chip" data-d="${esc(k)}" aria-pressed="${state.dept === k}">${esc(l)}</button>`).join('');
+      .map(([k, l]) => `<button type="button" class="chip" data-d="${esc(k)}" aria-pressed="${state.dept === k}">${esc(l)}</button>`).join('');
     return {
-      html: `<div class="chips" id="depts">${draw()}</div>`,
+      html: `<div class="chips" id="depts" role="group" aria-label="부서">${draw()}</div>`,
       bind() {
         const el = document.getElementById('depts');
         if (!el) return;
@@ -339,308 +511,371 @@
     };
   }
   const inDept = (p) => !state.dept || p.dept === state.dept;
+  function searchBox(id, placeholder, value = '') {
+    return `<label class="search">${icon('search')}<input id="${id}" type="search" placeholder="${placeholder}" value="${esc(value)}" autocomplete="off" enterkeyhint="search"><button type="button" class="search__clear" aria-label="검색어 지우기" ${value ? '' : 'hidden'}>${icon('x')}</button></label>`;
+  }
+  function bindSearch(id, onInput) {
+    const $i = document.getElementById(id);
+    const $c = $i.parentElement.querySelector('.search__clear');
+    $i.addEventListener('input', () => { $c.hidden = !$i.value; onInput($i.value.trim()); });
+    $c.onclick = () => { $i.value = ''; $c.hidden = true; onInput(''); $i.focus(); };
+    return $i;
+  }
 
-  /* ─── 화면: 모아보기 ─────────────────────── */
-  async function viewList() {
+  /* ─── 화면: 교제록 (모아보기) ─── */
+  async function viewList({ restore = false } = {}) {
+    const draft = store.get('draft', null);
+    const hasDraft = draft && (draft.share || draft.verse || (draft.people || []).length);
     $app.innerHTML = `
-      <div class="page-head"><h1>교제록 모아보기</h1><p>주마다 나눈 말씀과 교제를 한눈에</p></div>
-      <div id="notice"></div>
-      <label class="search"><input class="input" id="q" type="search" placeholder="이름, 말씀, 나눔 내용으로 검색" value="${esc(state.q)}" autocomplete="off"></label>
+      ${pageHead('교제록', '주마다 나눈 말씀과 교제를 모아 봐요')}
+      <a class="composer card" href="#/write">
+        ${avatar(auth.me?.name)}
+        <span class="composer__ph">${hasDraft ? '쓰다 만 교제록이 있어요' : '이번 주 교제록을 남겨 주세요'}</span>
+        <span class="btn btn--primary btn--sm">${hasDraft ? '이어 쓰기' : '쓰기'}</span>
+      </a>
+      <div class="toolbar">
+        ${searchBox('q', '이름, 말씀, 나눔으로 찾기', state.q)}
+        <select class="select select--sm" id="month" aria-label="기간"></select>
+      </div>
       <div id="deptWrap"></div>
-      <div class="chips" id="months"></div>
-      <div id="list">${skeleton()}</div>
+      <div id="list">${skeletonCards()}</div>
       <div class="more" id="more"></div>`;
     const posts = await loadPosts();
     if (!document.getElementById('list')) return;
-    document.getElementById('notice').innerHTML = sampleNotice();
+    if (state.source === 'error') { document.getElementById('list').innerHTML = errorState(); return; }
+
     const dc = deptChips(posts, () => drawList());
     document.getElementById('deptWrap').innerHTML = dc.html;
     dc.bind();
 
-    const $months = document.getElementById('months');
+    const $month = document.getElementById('month');
     const drawMonths = () => {
       const months = [...new Set(posts.filter((p) => p.date).map((p) => monthKey(p.date)))];
-      $months.innerHTML = [['', '전체'], ...months.map((m) => [m, monthLabel(m)])]
-        .map(([k, l]) => `<button class="chip" data-m="${k}" aria-pressed="${state.month === k}">${l}</button>`).join('');
+      $month.innerHTML = [['', '전체 기간'], ...months.map((m) => [m, monthLabel(m)])]
+        .map(([k, l]) => `<option value="${k}"${state.month === k ? ' selected' : ''}>${l}</option>`).join('');
     };
     drawMonths();
+    $month.onchange = () => { state.month = $month.value; drawList(); };
+    bindSearch('q', (v) => { state.q = v; drawList(); });
 
-    // 더 불러오기
     const $more = document.getElementById('more');
     const drawMore = () => {
-      $more.innerHTML = state.hasMore ? `<button class="btn" id="moreBtn">이전 교제록 더 불러오기</button>` : '';
+      $more.innerHTML = state.hasMore ? `<button class="btn" type="button" id="moreBtn">이전 교제록 더 보기</button>` : '';
       const b = document.getElementById('moreBtn');
       if (b) b.onclick = async () => {
-        b.disabled = true; b.textContent = '불러오는 중…';
+        b.disabled = true; b.innerHTML = `${spinner}불러오는 중`;
         const n = await loadMore();
         if (!document.getElementById('list')) return;
         if (n) toast(`${n}개를 더 불러왔어요`);
-        drawMonths(); drawList(); drawMore();
+        drawMonths(); drawList(false); drawMore();
       };
     };
     drawMore();
     // 최근 글 본문을 뒤에서 받아와서 참석자·기도제목·검색에 반영
-    if (state.source === 'api') {
-      fillBodies().then(() => { if (document.getElementById('list')) drawList(); });
-    }
-    $months.onclick = (e) => {
-      const b = e.target.closest('[data-m]');
-      if (!b) return;
-      state.month = b.dataset.m;
-      drawMonths();
-      drawList();
-    };
-    const $q = document.getElementById('q');
-    $q.oninput = () => { state.q = $q.value.trim(); drawList(); };
+    fillBodies().then(() => { if (document.getElementById('list')) drawList(false); });
 
-    function drawList() {
+    function drawList(animate = true) {
       const q = state.q.toLowerCase();
-      const rows = posts.filter((p) => inDept(p) &&
-        (!state.month || (p.date && monthKey(p.date) === state.month)) &&
-        (!q || (p.title + '\n' + p.text + '\n' + p.author).toLowerCase().includes(q)));
+      const byFilter = posts.filter((p) => inDept(p) && (!state.month || (p.date && monthKey(p.date) === state.month)));
+      const rows = byFilter.filter((p) => !q || (p.title + '\n' + p.text + '\n' + p.author).toLowerCase().includes(q));
       const $list = document.getElementById('list');
-      if (!rows.length) { $list.innerHTML = `<div class="empty">찾는 교제록이 없어요</div>`; return; }
+      if (!rows.length) {
+        $list.innerHTML = q
+          ? emptyState({ title: `'${esc(state.q)}'에 맞는 교제록이 없어요`, desc: '다른 이름이나 낱말로 찾아보세요. 본문은 최근 교제록에서만 찾아요.', action: `<button class="btn btn--sm" type="button" id="clearQ">검색어 지우기</button>` })
+          : posts.length
+            ? emptyState({ ic: 'calendar', title: '이 조건에 맞는 교제록이 없어요', action: `<button class="btn btn--sm" type="button" id="resetF">필터 초기화</button>` })
+            : emptyState({ ic: 'book', title: '아직 교제록이 없어요', desc: '첫 교제록을 남겨 주세요', action: `<a class="btn btn--primary btn--sm" href="#/write">${icon('pen')}교제록 쓰기</a>` });
+        document.getElementById('clearQ')?.addEventListener('click', () => { state.q = ''; const i = document.getElementById('q'); i.value = ''; i.dispatchEvent(new Event('input')); });
+        document.getElementById('resetF')?.addEventListener('click', () => { state.dept = ''; state.month = ''; viewList(); });
+        return;
+      }
       let html = '';
-      let lastMonth = '';
-      for (const p of rows) {
+      let lastMonth = null;
+      rows.forEach((p, i) => {
         const mk = p.date ? monthKey(p.date) : '';
         if (mk !== lastMonth) {
-          if (lastMonth !== '') html += '</div>';
-          html += `<h2 class="month">${mk ? monthLabel(mk) : '날짜 없음'}</h2><div class="post-list">`;
+          if (lastMonth !== null) html += '</div>';
+          html += `<h2 class="group-title">${mk ? monthLabel(mk) : '날짜 없음'}</h2><div class="feed">`;
           lastMonth = mk;
         }
-        const excerpt = q && !p.share.toLowerCase().includes(q) ? findSnippet(p.text, q) : (p.share || p.text.slice(0, 120));
+        const excerpt = q && !p.share.toLowerCase().includes(q) ? findSnippet(p.text, q) : summaryOf(p);
         html += `
-          <a class="post-item" href="#/post/${encodeURIComponent(p.id)}">
-            <div class="date-badge">${p.date ? `<b>${p.date.getDate()}</b><small>${p.date.getMonth() + 1}월 ${WEEK[p.date.getDay()]}</small>` : '<b>·</b>'}</div>
-            <div>
-              <h3>${highlight(p.title, state.q)}</h3>
-              ${p.verse ? `<div class="verse">${highlight(p.verse, state.q)}</div>` : ''}
-              ${excerpt ? `<p class="excerpt">${highlight(excerpt, state.q)}</p>` : ''}
-              <div class="meta">
-                ${p.people.length ? `<span>👥 ${p.people.length}명</span>` : ''}
-                ${p.prayers.length ? `<span>🙏 기도제목 ${p.prayers.length}</span>` : ''}
-                ${p.etc ? `<span>📌 기타</span>` : ''}
-                ${p.photos.length ? `<span>📷 ${p.photos.length}</span>` : ''}
-                ${p.comments ? `<span>💬 ${p.comments}</span>` : ''}
-                ${p.author ? `<span>✍️ ${esc(p.author)}</span>` : ''}
-              </div>
+          <a class="post card${animate && !reduceMotion() ? ' rise' : ''}" style="--i:${Math.min(i, 8)}" href="#/post/${encodeURIComponent(p.id)}">
+            <div class="post__head">
+              ${avatar(p.author)}
+              <div class="post__who"><b>${esc(p.author || '작성자')}</b><span>${fullDate(p.date)}</span></div>
+              <div class="post__tags">${isNew(p) ? '<span class="tag tag--new">새 글</span>' : ''}${tag(p.dept)}</div>
+            </div>
+            <h3 class="post__title">${highlight(p.title, state.q)}</h3>
+            ${p.verse ? `<p class="post__verse">${icon('quote')}${highlight(p.verse, state.q)}</p>` : ''}
+            ${excerpt ? `<p class="post__excerpt">${highlight(excerpt, state.q)}</p>` : ''}
+            ${p.photos.length ? `<div class="post__cover">${imgTag(p.photos[0])}${p.photos.length > 1 ? `<span class="post__more">+${p.photos.length - 1}</span>` : ''}</div>` : ''}
+            <div class="post__meta">
+              ${p.people.length ? `<span>${icon('users')}${p.people.length}명</span>` : ''}
+              ${p.prayers.length ? `<span>${icon('heart')}기도제목 ${p.prayers.length}</span>` : ''}
+              ${p.comments ? `<span>${icon('msg')}${p.comments}</span>` : ''}
+              ${!p.hasBody ? '<span class="post__loading">본문 읽는 중</span>' : ''}
             </div>
           </a>`;
-      }
+      });
       $list.innerHTML = html + '</div>';
     }
-    drawList();
+    drawList(!restore);
+    if (restore && state.listScroll) window.scrollTo(0, state.listScroll);
+  }
+  // 목록에 보여줄 두 줄: 나눔 → 말씀 요약 → 소제목·이름 목록·날짜 줄을 뺀 본문
+  function summaryOf(p) {
+    if (p.share) return p.share;
+    if (p.verseNote) return p.verseNote;
+    return p.text.split('\n').map((l) => l.trim()).filter((l) => l &&
+      !/^[[■▶●◆\-·•*]/.test(l) && !(l.length < 40 && parseDate(l)) && !/^\d+\.\s/.test(l))
+      .join(' ').slice(0, 160);
   }
   function findSnippet(text, q) {
     const i = text.toLowerCase().indexOf(q);
-    if (i < 0) return text.slice(0, 120);
+    if (i < 0) return text.slice(0, 140);
     const s = Math.max(0, i - 30);
-    return (s > 0 ? '…' : '') + text.slice(s, i + q.length + 70).replace(/\n/g, ' ');
+    return (s > 0 ? '…' : '') + text.slice(s, i + q.length + 80).replace(/\n/g, ' ');
   }
 
-  /* ─── 화면: 상세 ─────────────────────────── */
+  /* ─── 화면: 글 하나 ─── */
   async function viewPost(id) {
-    $app.innerHTML = `<a class="back" href="#/">목록</a>${skeleton()}`;
+    const back = `<a class="back" href="#/">${icon('left')}교제록</a>`;
+    $app.innerHTML = `${back}<div class="card detail"><span class="sk sk-line" style="width:30%"></span><span class="sk sk-line" style="width:80%;height:24px"></span><span class="sk sk-line"></span><span class="sk sk-line"></span><span class="sk sk-line" style="width:60%"></span></div>`;
     const p = await loadDetail(id);
-    if (!p) { $app.innerHTML = `<a class="back" href="#/">목록</a><div class="empty">교제록을 찾을 수 없어요</div>`; return; }
-    const sec = (title, inner) => (inner ? `<section class="section"><h2>${title}</h2>${inner}</section>` : '');
-    const para = (s) => (s ? `<p>${esc(s)}</p>` : '');
-    const body = p.structured
-      ? [
-          sec(`참석자 ${p.people.length}명`, p.people.length ? `<div class="people">${p.people.map((n) => `<span class="person">${esc(n)}</span>`).join('')}</div>` : ''),
-          sec('말씀', p.verse ? `<p><b>${esc(p.verse)}</b></p>${para(p.verseNote)}` : ''),
-          sec('나눔', para(p.share)),
-          sec('기도제목', p.prayers.length ? `<ul class="prayer-list">${p.prayers.map((x) => `<li>${x.name ? `<b>${esc(x.name)}</b>` : ''}${esc(x.text)}</li>`).join('')}</ul>` : ''),
-          sec('기타', para(p.etc)),
-        ].join('')
-      : (p.people.length ? sec(`참석자 ${p.people.length}명`, `<div class="people">${p.people.map((n) => `<span class="person">${esc(n)}</span>`).join('')}</div>`) : '') +
-        `<div class="section raw-html">${sanitize(p.body) || '<p class="muted">본문이 없어요</p>'}</div>`;
+    if (!document.querySelector('.detail')) return;
+    if (!p) { $app.innerHTML = back + emptyState({ ic: 'alert', title: '교제록을 찾을 수 없어요', desc: '지워졌거나 볼 수 없는 글이에요' }); return; }
+    const sec = (title, ic, inner, extra = '') => (inner ? `<section class="sec"><h2>${icon(ic)}${title}${extra}</h2>${inner}</section>` : '');
+    const para = (s) => (s ? `<p class="sec__text">${esc(s)}</p>` : '');
+    const people = p.people.length ? sec('참석', 'users', `<div class="people">${p.people.map((n) => `<span class="person">${esc(n)}</span>`).join('')}</div>`, `<small>${p.people.length}명</small>`) : '';
+    // 소제목(■ 양식이든 게시판의 [ 참석 ] 양식이든)이 2개 넘게 있으면 칸별로, 아니면 원문 그대로
+    const RENDER = {
+      people: () => people,
+      verse: () => sec('말씀', 'quote', p.verse || p.verseNote ? `<blockquote class="verse">${p.verse ? `<b>${esc(p.verse)}</b>` : ''}${para(p.verseNote)}</blockquote>` : ''),
+      share: () => sec('나눔', 'msg', para(p.share)),
+      prayer: () => sec('기도제목', 'heart', p.prayers.length ? `<ul class="prayers">${p.prayers.map((x) => `<li>${x.name ? `<b>${esc(x.name)}</b>` : ''}<span>${esc(x.text)}</span></li>`).join('')}</ul>` : ''),
+      etc: () => sec('기타', 'pin', para(p.etc)),
+      writer: () => '', date: () => '',
+    };
+    const keys = Object.keys(p.sec || {});
+    const body = keys.length >= 2
+      ? keys.map((k) => (RENDER[k] ? RENDER[k]() : sec(esc(k), 'pin', para((p.sec[k] || []).join('\n'))))).join('')
+      : `${people}<div class="sec raw-html">${sanitize(p.body) || '<p class="muted">본문이 없어요</p>'}</div>`;
     const photos = p.photos.length
-      ? `<section class="section"><h2>사진 ${p.photos.length}장</h2><div class="gallery">${p.photos.map((u) => `<a href="${esc(u)}" target="_blank" rel="noopener"><img src="${esc(u)}" alt="" loading="lazy"></a>`).join('')}</div></section>`
+      ? sec('사진', 'image', `<div class="gallery g-${Math.min(p.photos.length, 4)}">${p.photos.map((u, i) => `<button type="button" class="gallery__item" data-photo="${i}" aria-label="사진 ${i + 1} 크게 보기">${imgTag(u)}</button>`).join('')}</div>`, `<small>${p.photos.length}장</small>`)
       : '';
+    // 이전·다음 글 (지금 불러온 목록 안에서)
+    const list = state.posts || [];
+    const idx = list.findIndex((x) => x.id === p.id);
+    const newer = idx > 0 ? list[idx - 1] : null;
+    const older = idx >= 0 && idx < list.length - 1 ? list[idx + 1] : null;
+
     $app.innerHTML = `
-      <a class="back" href="#/">목록</a>
-      ${sampleNotice()}
+      ${back}
       <article class="card detail">
-        <h1>${esc(p.title)}</h1>
-        <div class="meta">
-          ${p.date ? `<span>📅 ${dotDate(p.date)} (${WEEK[p.date.getDay()]})</span>` : ''}
-          ${p.author ? `<span>✍️ ${esc(p.author)}</span>` : ''}
-          ${p.hits ? `<span>👀 ${p.hits}</span>` : ''}
-          ${p.likes ? `<span>♥ ${p.likes}</span>` : ''}
+        <div class="detail__tags">${tag(p.dept)}</div>
+        <h1 class="detail__title">${esc(p.title)}</h1>
+        <div class="detail__by">
+          ${avatar(p.author)}
+          <div><b>${esc(p.author || '작성자')}</b><span>${fullDate(p.date)}${p.hits ? ` · 조회 ${p.hits}` : ''}</span></div>
         </div>
         ${body}
         ${photos}
-        <section class="section" id="comments"></section>
-      </article>`;
-    if (state.source === 'api') drawComments(p);
+        <section class="sec" id="comments"></section>
+      </article>
+      ${newer || older ? `<nav class="pager">
+        ${older ? `<a href="#/post/${encodeURIComponent(older.id)}">${icon('left')}<span><small>이전 글</small>${esc(older.title)}</span></a>` : '<span></span>'}
+        ${newer ? `<a class="pager__next" href="#/post/${encodeURIComponent(newer.id)}"><span><small>다음 글</small>${esc(newer.title)}</span>${icon('right')}</a>` : ''}
+      </nav>` : ''}`;
+    $app.querySelectorAll('[data-photo]').forEach((b) => { b.onclick = () => lightbox(p.photos, Number(b.dataset.photo)); });
+    drawComments(p);
   }
 
   async function drawComments(p) {
     const $c = document.getElementById('comments');
     if (!$c) return;
-    $c.innerHTML = `<h2>댓글</h2><p class="muted small">불러오는 중…</p>`;
+    $c.innerHTML = `<h2>${icon('msg')}댓글</h2><div class="sk sk-line" style="width:50%"></div>`;
     const r = await callApi('board_comment', { board_uid: p.id, orderby: 'ASC' });
     if (!document.getElementById('comments')) return;
     // 댓글 API는 { status } 없이 배열만 돌려줌
-    const list = (Array.isArray(r) ? r : (Array.isArray(r.result) ? r.result : [])).filter((x) => x && x.comment);
+    const list = (Array.isArray(r) ? r : (Array.isArray(r.result) ? r.result : [])).filter((x) => x && x.comment)
+      .map((x) => ({ ...x, text: htmlToText(x.comment) }));
     const myId = String(auth.me?.userid || '').toLowerCase();
-    $c.innerHTML = `<h2>댓글 ${list.length}</h2>` + (list.length
-      ? `<ul class="comment-list">${list.map((x) => {
-          const d = parseDate(x.created);
-          const mine = myId && String(x.userid || '').toLowerCase() === myId;
-          return `<li><div class="comment-head"><b>${esc(x.username || '')}</b>${x.sex ? `<span class="muted"> ${esc(x.sex)}</span>` : ''}${d ? `<time>${d.getMonth() + 1}.${d.getDate()}</time>` : ''}${mine ? `<button class="comment-del" data-del="${esc(x.uid)}" aria-label="내 댓글 지우기">지우기</button>` : ''}</div><p>${esc(htmlToText(x.comment))}</p></li>`;
-        }).join('')}</ul>`
-      : `<p class="muted small">아직 댓글이 없어요. 첫 댓글을 남겨 주세요</p>`) + `
-      <form class="comment-form" id="commentForm">
-        <textarea class="textarea" name="comment" rows="2" maxlength="1000" placeholder="댓글을 남겨 주세요" required></textarea>
-        <button class="btn btn--primary" type="submit">등록</button>
+    const isMine = (x) => myId && String(x.userid || '').toLowerCase() === myId;
+    const item = (x) => {
+      const d = x.created ? new Date(String(x.created).replace(' ', 'T')) : null;
+      return `<li class="${x.pending ? 'is-pending' : ''}">
+        ${avatar(x.username, x.profilePic, 'sm')}
+        <div class="cmt__body">
+          <div class="cmt__head"><b>${esc(x.username || '')}</b>${x.sex ? `<span>${esc(x.sex)}</span>` : ''}<time>${x.pending ? '보내는 중' : esc(rel(d && !isNaN(d) ? d : null))}</time>
+            ${isMine(x) && !x.pending ? `<button type="button" class="cmt__del" data-del="${esc(x.uid)}" aria-label="내 댓글 지우기">${icon('trash')}</button>` : ''}</div>
+          <p>${esc(x.text)}</p>
+        </div></li>`;
+    };
+    const draw = () => {
+      const $list = $c.querySelector('.cmts');
+      $c.querySelector('h2 small').textContent = list.length || '';
+      $list.innerHTML = list.length ? list.map(item).join('') : `<li class="cmt__empty">아직 댓글이 없어요. 첫 댓글을 남겨 주세요</li>`;
+      $list.querySelectorAll('[data-del]').forEach((b) => {
+        b.onclick = async () => {
+          if (!(await confirmSheet('댓글을 지울까요?', '지운 댓글은 되돌릴 수 없어요.', '지우기', 'danger'))) return;
+          const i = list.findIndex((x) => String(x.uid) === b.dataset.del);
+          const [gone] = list.splice(i, 1);
+          draw();
+          const res = await callApi('comment', { mode: 'del_comment', board_uid: p.id, comment_uid: b.dataset.del });
+          if (res.status !== 'ok') { list.splice(i, 0, gone); draw(); toast(`지우지 못했어요: ${errText(res)}`, { tone: 'error' }); return; }
+          p.comments = Math.max(0, (p.comments || 1) - 1);
+          toast('댓글을 지웠어요');
+        };
+      });
+    };
+    $c.innerHTML = `
+      <h2>${icon('msg')}댓글<small></small></h2>
+      <ul class="cmts"></ul>
+      <form class="cmt-form" id="cmtForm">
+        ${avatar(auth.me?.name, '', 'sm')}
+        <div class="cmt-form__box">
+          <textarea name="comment" rows="1" maxlength="1000" placeholder="댓글 남기기" aria-label="댓글"></textarea>
+          <button class="cmt-form__send" type="submit" aria-label="댓글 등록" disabled>${icon('send')}</button>
+        </div>
       </form>`;
-
-    const $form = document.getElementById('commentForm');
+    draw();
+    const $form = document.getElementById('cmtForm');
     const $ta = $form.comment;
+    const $send = $form.querySelector('button');
+    const autosize = () => { $ta.style.height = 'auto'; $ta.style.height = Math.min($ta.scrollHeight, 160) + 'px'; };
+    $ta.addEventListener('input', () => { autosize(); $send.disabled = $ta.value.trim().length < 2; });
+    $ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $form.requestSubmit(); });
     $form.onsubmit = async (e) => {
       e.preventDefault();
       const text = $ta.value.trim();
-      if (text.length < 2) { toast('댓글은 2자 이상 써 주세요'); return; }
-      const $btn = $form.querySelector('button');
-      $btn.disabled = true; $btn.textContent = '등록 중…';
-      const res = await callApi('comment', {
-        mode: 'add_comment', board_uid: p.id, comment: text,
-        url: `${location.origin}/#/post/${p.id}`,
-      });
+      if (text.length < 2) return;
+      // 낙관적 UI: 먼저 목록에 보여주고, 실패하면 되돌림
+      const temp = { uid: 'tmp', username: auth.me?.name || '나', userid: auth.me?.userid, text, pending: true };
+      list.push(temp); draw();
+      $ta.value = ''; autosize(); $send.disabled = true;
+      const res = await callApi('comment', { mode: 'add_comment', board_uid: p.id, comment: text, url: `${location.origin}/#/post/${p.id}` });
+      const i = list.indexOf(temp);
       if (res.status !== 'ok') {
-        $btn.disabled = false; $btn.textContent = '등록';
-        toast(`댓글을 달지 못했어요: ${typeof res.result === 'string' ? res.result : '알 수 없는 오류'}`);
+        list.splice(i, 1); draw();
+        $ta.value = text; autosize(); $send.disabled = false;
+        toast(`댓글을 달지 못했어요: ${errText(res)}`, { tone: 'error' });
         return;
       }
+      list[i] = { ...temp, pending: false, uid: res.uid || res.result?.uid || '', created: new Date().toISOString() };
       p.comments = (p.comments || 0) + 1;
-      toast('댓글을 달았어요');
-      drawComments(p);
+      draw();
+      if (!list[i].uid) drawComments(p); // 번호를 못 받았으면 목록을 새로 받아 지우기 버튼 살리기
     };
-    $c.querySelectorAll('[data-del]').forEach((b) => {
-      b.onclick = async () => {
-        if (!confirm('이 댓글을 지울까요?')) return;
-        b.disabled = true;
-        const res = await callApi('comment', { mode: 'del_comment', board_uid: p.id, comment_uid: b.dataset.del });
-        if (res.status !== 'ok') { b.disabled = false; toast(`지우지 못했어요: ${typeof res.result === 'string' ? res.result : '알 수 없는 오류'}`); return; }
-        p.comments = Math.max(0, (p.comments || 1) - 1);
-        toast('댓글을 지웠어요');
-        drawComments(p);
-      };
-    });
   }
 
-  /* ─── 화면: 기도제목 모아보기 ────────────── */
+  /* ─── 화면: 기도제목 ─── */
   async function viewPrayers() {
     $app.innerHTML = `
-      <div class="page-head"><h1>기도제목</h1><p>서로의 기도제목을 기억하고 함께 기도해요</p></div>
-      <div id="notice"></div>
-      <label class="search"><input class="input" id="pq" type="search" placeholder="이름이나 내용으로 찾기" autocomplete="off"></label>
+      ${pageHead('기도제목', '서로의 기도제목을 기억하고 함께 기도해요')}
+      <div class="toolbar">
+        ${searchBox('pq', '이름이나 내용으로 찾기')}
+        <div class="seg" role="group" aria-label="보기 방식" id="pmode"></div>
+      </div>
       <div id="deptWrap"></div>
-      <div class="chips" id="pmode"></div>
-      <div id="plist">${progress('교제록 불러오는 중…')}</div>`;
+      <div id="plist">${progressBar('pprog', '최근 교제록 읽는 중')}${skeletonCards(3)}</div>`;
     const posts = await loadPosts();
     if (!document.getElementById('plist')) return;
-    if (state.source === 'api') await fillBodies(setProgress);
+    if (state.source === 'error') { document.getElementById('plist').innerHTML = errorState(); return; }
+    await fillBodies((d, t) => setProg('pprog', d, t, `최근 교제록 읽는 중 · ${d}/${t}`));
     if (!document.getElementById('plist')) return;
-    document.getElementById('notice').innerHTML = sampleNotice();
     const dc = deptChips(posts, () => draw());
     document.getElementById('deptWrap').innerHTML = dc.html;
     dc.bind();
-    let items = [];
     const $mode = document.getElementById('pmode');
-    const $pq = document.getElementById('pq');
+    let q = '';
     const drawMode = () => {
       $mode.innerHTML = [['person', '사람별'], ['week', '주차별']]
-        .map(([k, l]) => `<button class="chip" data-k="${k}" aria-pressed="${state.prayerMode === k}">${l}</button>`).join('');
+        .map(([k, l]) => `<button type="button" data-k="${k}" aria-pressed="${state.prayerMode === k}">${l}</button>`).join('');
     };
     $mode.onclick = (e) => { const b = e.target.closest('[data-k]'); if (b) { state.prayerMode = b.dataset.k; drawMode(); draw(); } };
-    $pq.oninput = draw;
+    bindSearch('pq', (v) => { q = v; draw(); });
     drawMode();
     draw();
 
     function draw() {
-      items = posts.filter(inDept).flatMap((p) => p.prayers.map((x) => ({ ...x, date: p.date, postId: p.id })));
-      const q = $pq.value.trim();
+      const items = posts.filter(inDept).flatMap((p) => p.prayers.map((x) => ({ ...x, date: p.date, postId: p.id })));
       const ql = q.toLowerCase();
       const rows = items.filter((x) => !ql || (x.name + ' ' + x.text).toLowerCase().includes(ql));
       const $l = document.getElementById('plist');
-      if (!rows.length) { $l.innerHTML = `<div class="empty">${items.length ? '찾는 기도제목이 없어요' : '아직 모인 기도제목이 없어요'}</div>`; return; }
+      if (!rows.length) {
+        $l.innerHTML = q
+          ? emptyState({ title: `'${esc(q)}'에 맞는 기도제목이 없어요` })
+          : emptyState({ ic: 'heart', title: '아직 모인 기도제목이 없어요', desc: `최근 교제록 ${C.board.bodiesToLoad}개에서 모아요` });
+        return;
+      }
       const groups = new Map();
       for (const x of rows) {
         const key = state.prayerMode === 'person' ? (x.name || '이름 없음') : (x.date ? ymd(x.date) : '날짜 없음');
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(x);
       }
-      $l.innerHTML = [...groups].map(([key, list]) => {
+      $l.innerHTML = `<div class="pgrid">${[...groups].map(([key, list]) => {
         const head = state.prayerMode === 'person'
-          ? `${highlight(key, q)} <small>${list.length}개</small>`
-          : `${list[0].date ? korDate(list[0].date) : key} <small>${list.length}명</small>`;
-        return `<div class="card prayer-group"><h3>${head}</h3>${list.map((x) => `
-          <div class="prayer-row">
-            <time>${state.prayerMode === 'person' ? (x.date ? `${x.date.getMonth() + 1}.${x.date.getDate()}` : '') : esc(x.name)}</time>
-            <a href="#/post/${encodeURIComponent(x.postId)}" style="text-decoration:none">${highlight(x.text, q)}</a>
-          </div>`).join('')}</div>`;
-      }).join('');
+          ? `${avatar(key, '', 'sm')}<b>${highlight(key, q)}</b><small>${list.length}개</small>`
+          : `<span class="datebox"><b>${list[0].date ? list[0].date.getDate() : '·'}</b><small>${list[0].date ? `${list[0].date.getMonth() + 1}월` : ''}</small></span><b>${list[0].date ? fullDate(list[0].date) : key}</b><small>${list.length}명</small>`;
+        return `<section class="card pcard"><header>${head}</header><ul>${list.map((x) => `
+          <li><a href="#/post/${encodeURIComponent(x.postId)}"><span class="pcard__when">${state.prayerMode === 'person' ? (x.date ? `${x.date.getMonth() + 1}.${x.date.getDate()}` : '') : esc(x.name)}</span><span>${highlight(x.text, q)}</span></a></li>`).join('')}</ul></section>`;
+      }).join('')}</div>`;
     }
   }
 
-  /* ─── 화면: 참석 흐름 ────────────────────── */
+  /* ─── 화면: 참석 흐름 (관리자) ─── */
   async function viewAttendance() {
-    $app.innerHTML = `<div class="page-head"><h1>참석 흐름</h1><p>주마다 누가 함께했는지 살펴봐요</p></div><div id="deptWrap"></div><div id="body">${progress('교제록 불러오는 중…')}</div>`;
+    $app.innerHTML = `${pageHead('참석 흐름', '주마다 누가 함께했는지 살펴봐요', '<span class="tag t-sun">관리자</span>')}<div id="deptWrap"></div><div id="body">${progressBar('aprog', '최근 교제록 읽는 중')}${skeletonCards(2)}</div>`;
     const all = await loadPosts();
     if (!document.getElementById('body')) return;
-    if (state.source === 'api') await fillBodies(setProgress);
+    if (state.source === 'error') { document.getElementById('body').innerHTML = errorState(); return; }
+    await fillBodies((d, t) => setProg('aprog', d, t, `최근 교제록 읽는 중 · ${d}/${t}`));
     if (!document.getElementById('body')) return;
     const dc = deptChips(all.filter((p) => p.people.length), () => viewAttendance());
     document.getElementById('deptWrap').innerHTML = dc.html;
     dc.bind();
     const posts = all.filter((p) => p.date && p.people.length && inDept(p));
     const $b = document.getElementById('body');
-    if (!posts.length) { $b.innerHTML = sampleNotice() + `<div class="empty">참석자 정보가 있는 교제록이 없어요</div>`; return; }
-    const weeks = posts.slice(0, 12).reverse(); // 오래된 주 → 최근 주
+    if (!posts.length) { $b.innerHTML = emptyState({ ic: 'users', title: '참석자 정보가 있는 교제록이 없어요' }); return; }
+    const weeks = posts.slice(0, 12).reverse();
     const max = Math.max(...weeks.map((p) => p.people.length));
     const avg = weeks.reduce((s, p) => s + p.people.length, 0) / weeks.length;
-    const recentWeeks = posts.slice(0, 8);
+    const recent = posts.slice(0, 8);
     const count = new Map();
-    recentWeeks.forEach((p) => p.people.forEach((n) => count.set(n, (count.get(n) || 0) + 1)));
+    recent.forEach((p) => p.people.forEach((n) => count.set(n, (count.get(n) || 0) + 1)));
     const names = [...count.keys()].sort((a, b) => count.get(b) - count.get(a) || a.localeCompare(b, 'ko'));
-    const cols = [...recentWeeks].reverse();
-
+    const cols = [...recent].reverse();
+    const diff = posts[1] ? posts[0].people.length - posts[1].people.length : 0;
     $b.innerHTML = `
-      ${sampleNotice()}
       <div class="stats">
-        <div class="stat"><small>지난주 참석</small><b>${posts[0].people.length}명</b></div>
-        <div class="stat"><small>평균 (최근 ${weeks.length}주)</small><b>${avg.toFixed(1)}명</b></div>
-        <div class="stat"><small>함께한 사람</small><b>${names.length}명</b></div>
+        <div class="stat card"><small>지난 모임</small><b>${posts[0].people.length}<em>명</em></b>${posts[1] ? `<span class="${diff >= 0 ? 'up' : 'down'}">${diff >= 0 ? '+' : ''}${diff} 지난번보다</span>` : ''}</div>
+        <div class="stat card"><small>평균 · 최근 ${weeks.length}번</small><b>${avg.toFixed(1)}<em>명</em></b></div>
+        <div class="stat card"><small>함께한 사람</small><b>${names.length}<em>명</em></b></div>
       </div>
-      <div class="card" style="margin-bottom:16px">
-        <h2 class="month" style="margin:0">주별 참석 인원</h2>
-        <div class="trend" role="img" aria-label="주별 참석 인원 막대그래프">
-          ${weeks.map((p) => `
-            <div class="trend__bar" title="${korDate(p.date)} · ${p.people.length}명">
-              <b>${p.people.length}</b>
-              <i style="height:${Math.round((p.people.length / max) * 78)}%"></i>
+      <section class="card block">
+        <h2 class="block__title">모임별 참석 인원</h2>
+        <div class="trend" role="img" aria-label="모임별 참석 인원 막대그래프">
+          ${weeks.map((p, i) => `
+            <div class="trend__bar${i === weeks.length - 1 ? ' is-last' : ''}" title="${fullDate(p.date)} · ${p.people.length}명">
+              <b>${p.people.length}</b><i style="height:${Math.max(6, Math.round((p.people.length / max) * 100))}%"></i>
               <span>${p.date.getMonth() + 1}/${p.date.getDate()}</span>
             </div>`).join('')}
         </div>
-      </div>
-      <div class="card">
-        <h2 class="month" style="margin:0 0 8px">최근 ${cols.length}주 출석표</h2>
+      </section>
+      <section class="card block">
+        <h2 class="block__title">최근 ${cols.length}번 출석표</h2>
         <div class="matrix-wrap">
           <table class="matrix">
             <thead><tr><th>이름</th>${cols.map((p) => `<th>${p.date.getMonth() + 1}/${p.date.getDate()}</th>`).join('')}<th>참석</th></tr></thead>
-            <tbody>
-              ${names.map((n) => `<tr><td>${esc(n)}</td>${cols.map((p) => `<td><span class="dot${p.people.includes(n) ? ' on' : ''}" aria-label="${p.people.includes(n) ? '참석' : '불참'}"></span></td>`).join('')}<td class="rate">${count.get(n)}/${cols.length}</td></tr>`).join('')}
-            </tbody>
+            <tbody>${names.map((n) => `<tr><td>${esc(n)}</td>${cols.map((p) => `<td><span class="dot${p.people.includes(n) ? ' on' : ''}" aria-label="${p.people.includes(n) ? '참석' : '불참'}"></span></td>`).join('')}<td class="rate">${count.get(n)}/${cols.length}</td></tr>`).join('')}</tbody>
           </table>
         </div>
-      </div>`;
+      </section>`;
   }
 
-  /* ─── 명단 ──────────────────────────── */
+  /* ─── 명단 ─── */
   const getRoster = () => store.get('roster', []);
   // 부서별 명단 (Cloudflare 환경 변수 ROSTERS → 로그인한 회원만 받음, 기기에 저장 안 함)
   async function loadRosters() {
@@ -652,7 +887,7 @@
     return state.rosters;
   }
 
-  /* ─── 사진 축소 ──────────────────────────── */
+  /* ─── 사진 축소 ─── */
   async function shrink(file, max = 1600, quality = 0.85) {
     let img;
     try { img = await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch {
@@ -668,68 +903,100 @@
     return { blob, name, url: URL.createObjectURL(blob), before: file.size, after: blob.size };
   }
   const mb = (n) => (n / 1048576).toFixed(n > 1048576 ? 1 : 2) + 'MB';
+  async function copyRich(html, text) {
+    try {
+      if (window.ClipboardItem && navigator.clipboard?.write) {
+        await navigator.clipboard.write([new ClipboardItem({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([text], { type: 'text/plain' }),
+        })]);
+      } else {
+        await navigator.clipboard.writeText(text);
+      }
+      return true;
+    } catch {
+      try { await navigator.clipboard.writeText(text); return true; } catch { return false; }
+    }
+  }
 
-  /* ─── 화면: 작성 ─────────────────────────── */
+  /* ─── 화면: 쓰기 ─── */
   const photos = [];
   async function viewWrite() {
-    $app.innerHTML = `<div class="page-head"><h1>교제록 작성</h1></div>${skeleton()}`;
+    $app.innerHTML = `${pageHead('교제록 쓰기')}${skeletonCards(2)}`;
     const rosters = await loadRosters();
     if (location.hash.replace(/^#\/?/, '') !== 'write') return;
     const depts = Object.keys(rosters).filter((k) => rosters[k].length);
     const today = new Date();
-    const draft = store.get('draft', null) || { date: ymd(today), writer: auth.me?.name || "", people: [], extra: '', verse: '', verseNote: '', share: '', prayers: {}, etc: '' };
+    const draft = store.get('draft', null) || { date: ymd(today), writer: auth.me?.name || '', people: [], extra: '', verse: '', verseNote: '', share: '', prayers: {}, etc: '' };
     let dept = depts.includes(draft.dept) ? draft.dept : (depts.includes(store.get('lastDept', '')) ? store.get('lastDept', '') : (depts[0] || ''));
     const rosterOf = (d) => (d && rosters[d]) || getRoster();
     const roster = rosterOf(dept);
     const canPost = C.board.writeEnabled && !!auth.hash;
-    const checkBoxes = (list, checked) => list.map((n) => `<label class="check"><input type="checkbox" name="people" value="${esc(n)}"${checked.includes(n) ? ' checked' : ''}><span>${esc(n)}</span></label>`).join('');
+    const checkBoxes = (list, checked) => list.map((n) => `<label class="check"><input type="checkbox" name="people" value="${esc(n)}"${checked.includes(n) ? ' checked' : ''}><span>${icon('check')}${esc(n)}</span></label>`).join('');
+    const STEPS = [['people', '참석'], ['verse', '말씀'], ['share', '나눔'], ['prayer', '기도제목']];
 
     $app.innerHTML = `
-      <div class="page-head"><h1>교제록 작성</h1><p>양식대로 쓰고, 게시판에 바로 올리거나 복사해서 붙여넣어요</p></div>
-      ${depts.length || roster.length ? '' : `<div class="notice"><span>👥</span><div><b>부서 명단이 아직 없어요</b><br>부서별 명단이 등록되면 여기서 참석자를 고를 수 있어요. 그 전에는 아래 칸에 이름을 직접 적어 주세요.</div></div>`}
-      <form class="card form-card" id="f" autocomplete="off">
-        ${depts.length ? `<div class="field"><span>부서</span><div class="chips" id="deptPick" style="margin:0">${depts.map((d) => `<button type="button" class="chip" data-d="${esc(d)}" aria-pressed="${d === dept}">${esc(d)}</button>`).join('')}</div></div>` : ''}
-        <div class="grid-2">
-          <label class="field"><span>날짜</span><input class="input" type="date" name="date" value="${esc(draft.date)}"></label>
-          <label class="field"><span>작성자</span><input class="input" name="writer" list="rosterList" value="${esc(draft.writer)}" placeholder="이름"></label>
-        </div>
-        <datalist id="rosterList">${roster.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
-        <div class="field"><span>참석자 <b id="pc" class="muted"></b></span>
-          <div class="checks" id="checks">${checkBoxes(roster, draft.people)}</div>
-          <input class="input" name="extra" value="${esc(draft.extra)}" placeholder="${roster.length ? '명단에 없는 사람' : '참석자 이름'} (쉼표로 구분, 예: 새가족 홍길동)" style="margin-top:8px">
-        </div>
-        <label class="field"><span>말씀 본문</span><input class="input" name="verse" value="${esc(draft.verse)}" placeholder="예: 요한복음 15:5"></label>
-        <label class="field"><span>말씀 요약</span><textarea class="textarea" name="verseNote" placeholder="말씀에서 받은 은혜를 간단히">${esc(draft.verseNote)}</textarea></label>
-        <label class="field"><span>나눔</span><textarea class="textarea" name="share" rows="5" placeholder="함께 나눈 이야기">${esc(draft.share)}</textarea></label>
-        <div class="field"><span>기도제목</span><div class="prayer-inputs" id="prayers"></div></div>
-        <label class="field"><span>기타 <span class="muted small">(선택)</span></span><textarea class="textarea" name="etc" placeholder="광고, 모임 소식, 덧붙일 이야기">${esc(draft.etc ?? draft.bungae ?? '')}</textarea></label>
-        <div class="field"><span>사진 <span class="muted small">(자동으로 줄여서 저장해요)</span></span>
+      ${pageHead('교제록 쓰기', '쓰는 내용은 이 기기에 자동으로 저장돼요', '<span class="saved" id="saved" aria-live="polite"></span>')}
+      <div class="steps-bar card" id="steps" aria-label="작성 진행">
+        <div class="steps-bar__track">${STEPS.map(([k]) => `<i data-s="${k}"></i>`).join('')}</div>
+        <div class="steps-bar__labels">${STEPS.map(([k, l]) => `<span data-s="${k}">${icon('check')}${l}</span>`).join('')}</div>
+      </div>
+      <p class="inline-error" id="formError" role="alert" hidden></p>
+      <form class="write" id="f" autocomplete="off">
+        <section class="card wsec">
+          <h2 class="wsec__title">기본 정보</h2>
+          ${depts.length ? `<div class="field"><span class="field__label">부서</span><div class="seg seg--wrap" id="deptPick" role="group" aria-label="부서">${depts.map((d) => `<button type="button" data-d="${esc(d)}" aria-pressed="${d === dept}">${esc(d)}</button>`).join('')}</div></div>` : ''}
+          <div class="grid-2">
+            <label class="field"><span class="field__label">날짜</span><input class="input" type="date" name="date" value="${esc(draft.date)}"></label>
+            <label class="field"><span class="field__label">작성자</span><input class="input" name="writer" list="rosterList" value="${esc(draft.writer)}" placeholder="이름"></label>
+          </div>
+          <datalist id="rosterList">${roster.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
+        </section>
+
+        <section class="card wsec" id="sec-people">
+          <h2 class="wsec__title">참석자 <small id="pc"></small>${roster.length ? '<button type="button" class="link-btn" id="allBtn">모두 선택</button>' : ''}</h2>
+          ${roster.length ? `<div class="checks" id="checks">${checkBoxes(roster, draft.people)}</div>`
+            : `<p class="hint">${depts.length ? '' : '부서 명단이 등록되면 여기서 이름을 눌러 고를 수 있어요. 지금은 아래에 이름을 적어 주세요.'}</p>`}
+          <input class="input" name="extra" value="${esc(draft.extra)}" placeholder="${roster.length ? '명단에 없는 사람 (쉼표로 구분)' : '참석자 이름 (쉼표로 구분, 예: 김가람, 이나래)'}">
+        </section>
+
+        <section class="card wsec">
+          <h2 class="wsec__title">말씀</h2>
+          <label class="field"><span class="field__label">본문</span><input class="input" name="verse" value="${esc(draft.verse)}" placeholder="예: 요한복음 15:5"></label>
+          <label class="field"><span class="field__label">요약</span><textarea class="textarea" name="verseNote" rows="3" placeholder="말씀에서 받은 은혜를 간단히">${esc(draft.verseNote)}</textarea></label>
+        </section>
+
+        <section class="card wsec">
+          <h2 class="wsec__title">나눔</h2>
+          <textarea class="textarea" name="share" rows="5" placeholder="함께 나눈 이야기" aria-label="나눔">${esc(draft.share)}</textarea>
+        </section>
+
+        <section class="card wsec">
+          <h2 class="wsec__title">기도제목</h2>
+          <div class="prayer-inputs" id="prayers"></div>
+        </section>
+
+        <section class="card wsec">
+          <h2 class="wsec__title">기타 <small>선택</small></h2>
+          <textarea class="textarea" name="etc" rows="3" placeholder="광고, 모임 소식, 덧붙일 이야기" aria-label="기타">${esc(draft.etc ?? draft.bungae ?? '')}</textarea>
+        </section>
+
+        <section class="card wsec">
+          <h2 class="wsec__title">사진 <small>자동으로 줄여서 올려요</small></h2>
           <input type="file" id="photoInput" accept="image/*" multiple hidden>
-          <div class="btn-row"><button type="button" class="btn" id="addPhoto">＋ 사진 고르기</button><button type="button" class="btn" id="savePhotos" ${photos.length ? '' : 'hidden'}>줄인 사진 저장</button></div>
-          <div class="photos" id="photos" style="margin-top:10px"></div>
-        </div>
+          <div class="photos" id="photos"></div>
+        </section>
+
+        <details class="card preview-box">
+          <summary>게시판에 올라갈 모양 미리보기</summary>
+          <div class="preview" id="preview"></div>
+        </details>
       </form>
 
-      <h2 class="month" style="margin-top:28px">미리보기</h2>
-      <div class="preview" id="preview"></div>
-
-      <div class="card" style="margin-top:16px">
-        <h2 class="month" style="margin:0 0 6px">게시판에 올리는 방법</h2>
-        ${canPost ? `<p class="small" style="margin:0 0 8px"><b>게시판에 바로 올리기</b>를 누르면 제목·본문·사진이 청년회교제실에 한 번에 올라가요. <span class="muted">(${esc(auth.me?.name || '내')} 이름으로 등록)</span></p><p class="small muted" style="margin:0 0 4px">직접 붙여넣고 싶다면:</p>` : ''}
-        <ol class="steps">
-          <li><b>제목 복사</b> → 게시판 글쓰기의 제목 칸에 붙여넣기</li>
-          <li><b>본문 복사</b> → 내용 칸에 붙여넣기</li>
-          <li>줄인 사진을 게시판의 사진 첨부로 올리기</li>
-        </ol>
-      </div>
-
-      <div class="sticky-actions"><div class="btn-row">
-        ${canPost ? `<button class="btn btn--primary" id="postNow">게시판에 바로 올리기</button>` : ''}
-        <button class="btn" id="copyTitle">제목 복사</button>
-        <button class="btn${canPost ? '' : ' btn--primary'}" id="copyBody">본문 복사</button>
-        <a class="btn" href="${esc(C.board.siteUrl)}" target="_blank" rel="noopener">게시판 열기 ↗</a>
-        <button class="btn btn--ghost" id="reset">새로 쓰기</button>
-      </div></div>`;
+      <div class="actionbar">
+        <button class="btn btn--ghost" type="button" id="more">${icon('copy')}<span>직접 올리기</span></button>
+        <button class="btn btn--primary btn--lg" type="button" id="postNow"${canPost ? '' : ' disabled'}>${icon('send')}게시판에 올리기</button>
+      </div>`;
 
     const $f = document.getElementById('f');
     const prayerDraft = { ...draft.prayers };
@@ -752,10 +1019,10 @@
     function drawPrayers(all) {
       const $p = document.getElementById('prayers');
       const cur = [...$p.querySelectorAll('input')].map((i) => i.dataset.name).join('|');
-      if (cur === all.join('|')) return;
+      if (cur === all.join('|') && cur) return;
       $p.innerHTML = all.length
-        ? all.map((n) => `<div class="prayer-input"><label for="pr-${esc(n)}">${esc(n)}</label><input class="input" id="pr-${esc(n)}" data-name="${esc(n)}" value="${esc(prayerDraft[n] || '')}" placeholder="기도제목"></div>`).join('')
-        : `<div class="muted small">참석자를 체크하면 사람마다 입력 칸이 생겨요</div>`;
+        ? all.map((n) => `<label class="prayer-input">${avatar(n, '', 'sm')}<span class="prayer-input__name">${esc(n)}</span><input class="input" data-name="${esc(n)}" value="${esc(prayerDraft[n] || '')}" placeholder="기도제목"></label>`).join('')
+        : `<p class="hint">참석자를 고르면 사람마다 칸이 생겨요</p>`;
     }
     // 게시판에서 쓰던 제목 모양: "[2026 순종부] 2026.10.24 토요교제" (부서 없으면 "2026.10.24 청년회 토요교제")
     const titleOf = (d) => {
@@ -780,17 +1047,38 @@
     const toHtml = (d) => lines(d).map(([k, v, more]) =>
       `<p><b>■ ${esc(k)}</b>${v ? ': ' + esc(v) : ''}</p>${more ? more.split('\n').map((l) => `<p>${esc(l)}</p>`).join('') : ''}<p><br></p>`).join('');
 
-    function update() {
+    let savedTimer;
+    function update(save = true) {
       const d = read();
       drawPrayers(d.all);
       document.getElementById('pc').textContent = d.all.length ? `${d.all.length}명` : '';
       document.getElementById('preview').innerHTML = `<p><b>${esc(titleOf(d))}</b></p><p><br></p>` + toHtml(d);
-      const { all, ...save } = d;
-      store.set('draft', save);
+      const done = {
+        people: d.all.length > 0, verse: !!(d.verse || d.verseNote), share: !!d.share,
+        prayer: d.all.some((n) => (d.prayers[n] || '').trim()),
+      };
+      document.querySelectorAll('#steps [data-s]').forEach((el) => el.classList.toggle('on', done[el.dataset.s]));
+      const $all = document.getElementById('allBtn');
+      if ($all) $all.textContent = d.people.length === rosterOf(dept).length ? '모두 해제' : '모두 선택';
+      if (d.all.length || d.share) document.getElementById('formError').hidden = true;
+      if (!save) return;
+      const { all, ...keep } = d;
+      store.set('draft', keep);
+      const $s = document.getElementById('saved');
+      $s.innerHTML = `${spinner}저장 중`;
+      clearTimeout(savedTimer);
+      savedTimer = setTimeout(() => { if (document.getElementById('saved')) $s.innerHTML = `${icon('check')}자동 저장됨`; }, 500);
     }
-    $f.addEventListener('input', update);
-    $f.addEventListener('change', update);
-    // 부서를 바꾸면 그 부서 명단으로 참석자 칸을 다시 그림 (다른 부서에서 체크한 사람은 풀림)
+    $f.addEventListener('input', () => update());
+    $f.addEventListener('change', () => update());
+    $f.addEventListener('submit', (e) => e.preventDefault());
+    document.getElementById('allBtn')?.addEventListener('click', () => {
+      const boxes = [...document.querySelectorAll('#checks input')];
+      const on = !boxes.every((b) => b.checked);
+      boxes.forEach((b) => { b.checked = on; });
+      update();
+    });
+    // 부서를 바꾸면 그 부서 명단으로 참석자 칸을 다시 그림
     const $dp = document.getElementById('deptPick');
     if ($dp) $dp.onclick = (e) => {
       const b = e.target.closest('[data-d]');
@@ -800,118 +1088,132 @@
       $dp.querySelectorAll('[data-d]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.d === dept)));
       const list = rosterOf(dept);
       const kept = new FormData($f).getAll('people').filter((n) => list.includes(n));
-      document.getElementById('checks').innerHTML = checkBoxes(list, kept);
+      const $checks = document.getElementById('checks');
+      if ($checks) $checks.innerHTML = checkBoxes(list, kept);
       document.getElementById('rosterList').innerHTML = list.map((n) => `<option value="${esc(n)}">`).join('');
       update();
     };
-    $f.addEventListener('submit', (e) => e.preventDefault());
-    update();
-
-    async function copy(html, text) {
-      try {
-        if (window.ClipboardItem && navigator.clipboard?.write) {
-          await navigator.clipboard.write([new ClipboardItem({
-            'text/html': new Blob([html], { type: 'text/html' }),
-            'text/plain': new Blob([text], { type: 'text/plain' }),
-          })]);
-        } else {
-          await navigator.clipboard.writeText(text);
-        }
-        return true;
-      } catch {
-        try { await navigator.clipboard.writeText(text); return true; } catch { return false; }
-      }
-    }
-    document.getElementById('copyTitle').onclick = async () => {
-      const t = titleOf(read());
-      toast((await copy(esc(t), t)) ? '제목을 복사했어요' : '복사하지 못했어요. 미리보기를 길게 눌러 복사해 주세요');
-    };
-    document.getElementById('copyBody').onclick = async () => {
-      const d = read();
-      if (!d.all.length && !d.share) { toast('참석자나 나눔을 먼저 입력해 주세요'); return; }
-      toast((await copy(toHtml(d), toText(d))) ? '본문을 복사했어요. 게시판에 붙여넣으세요' : '복사하지 못했어요. 미리보기를 길게 눌러 복사해 주세요');
-    };
-    const $post = document.getElementById('postNow');
-    if ($post) $post.onclick = async () => {
-      const d = read();
-      if (!d.all.length && !d.share) { toast('참석자나 나눔을 먼저 입력해 주세요'); return; }
-      const title = titleOf(d);
-      if (!confirm(`청년회교제실 게시판에 올릴까요?\n\n제목: ${title}\n참석자: ${d.all.length}명 · 사진: ${photos.length}장\n\n올리면 교회 사이트에 바로 보여요.`)) return;
-      const label = $post.textContent;
-      $post.disabled = true;
-      const done = (msg) => { $post.disabled = false; $post.textContent = label; if (msg) toast(msg); };
-      // 1) 사진을 한 장씩 올려서 fileId 받기
-      const fileId = [];
-      const fileName = [];
-      for (const [i, ph] of photos.entries()) {
-        $post.textContent = `사진 올리는 중… ${i + 1}/${photos.length}`;
-        const r = await uploadPhoto(ph.blob, ph.name);
-        const f = r.status === 'ok' && r.result && typeof r.result === 'object' ? r.result : null;
-        if (!f?.fileId) { done(`사진을 올리지 못했어요: ${typeof r.result === 'string' ? r.result : '알 수 없는 오류'}`); return; }
-        fileId.push(String(f.fileId));
-        fileName.push(String(f.fileName || ph.name));
-      }
-      // 2) 글 등록
-      $post.textContent = '글 올리는 중…';
-      const r = await callApi('board_write', {
-        boardId: String(C.board.boardId), subject: title, content: toHtml(d),
-        ...(fileId.length ? { fileId, fileName } : {}),
-      });
-      if (r.status !== 'ok') { done(`올리지 못했어요: ${typeof r.result === 'string' ? r.result : '알 수 없는 오류'}`); return; }
-      store.del('draft');
-      photos.splice(0).forEach((p) => URL.revokeObjectURL(p.url));
-      state.posts = null; state.loading = null; state.rosters = null; // 목록 새로 불러오기
-      toast('게시판에 올렸어요 🎉');
-      location.hash = r.result?.uid ? `#/post/${r.result.uid}` : '#/';
-    };
-
-    document.getElementById('reset').onclick = () => {
-      if (!confirm('작성 중인 내용을 지우고 새로 쓸까요?')) return;
-      store.del('draft');
-      photos.splice(0).forEach((p) => URL.revokeObjectURL(p.url));
-      viewWrite();
-    };
+    update(false);
+    if (store.get('draft', null)) document.getElementById('saved').innerHTML = `${icon('check')}자동 저장됨`;
 
     // 사진
     const $pi = document.getElementById('photoInput');
-    const $save = document.getElementById('savePhotos');
     const drawPhotos = () => {
       document.getElementById('photos').innerHTML = photos.map((p, i) => `
-        <div class="photo"><img src="${p.url}" alt=""><small>${mb(p.before)} → ${mb(p.after)}</small><button type="button" data-del="${i}" aria-label="사진 빼기">×</button></div>`).join('');
-      $save.hidden = !photos.length;
+        <div class="photo"><img src="${p.url}" alt=""><small>${mb(p.after)}</small><button type="button" data-del="${i}" aria-label="사진 빼기">${icon('x')}</button></div>`).join('') +
+        `<button type="button" class="photo photo--add" id="addPhoto">${icon('plus')}<span>${photos.length ? '더 고르기' : '사진 고르기'}</span></button>`;
+      document.getElementById('addPhoto').onclick = () => $pi.click();
     };
     drawPhotos();
-    document.getElementById('addPhoto').onclick = () => $pi.click();
     $pi.onchange = async () => {
       const files = [...$pi.files];
       $pi.value = '';
       if (!files.length) return;
-      toast(`사진 ${files.length}장을 줄이는 중…`);
+      const $add = document.getElementById('addPhoto');
+      $add.innerHTML = `${spinner}<span>줄이는 중</span>`;
       for (const f of files) {
-        try { photos.push(await shrink(f)); } catch { toast(`${f.name}: 읽을 수 없는 사진이에요`); }
+        try { photos.push(await shrink(f)); } catch { toast(`${f.name}: 읽을 수 없는 사진이에요`, { tone: 'error' }); }
       }
       drawPhotos();
-      toast('사진을 줄였어요');
     };
-    document.getElementById('photos').onclick = (e) => {
+    document.getElementById('photos').addEventListener('click', (e) => {
       const b = e.target.closest('[data-del]');
       if (!b) return;
       const [p] = photos.splice(Number(b.dataset.del), 1);
-      URL.revokeObjectURL(p.url);
       drawPhotos();
+      toast('사진을 뺐어요', { action: { label: '되돌리기', onClick: () => { photos.splice(Number(b.dataset.del), 0, p); drawPhotos(); } } });
+    });
+
+    // 직접 올리기 (복사·저장·게시판 열기·새로 쓰기)
+    document.getElementById('more').onclick = async () => {
+      const sh = openSheet({
+        title: '직접 올리기',
+        body: `<p class="sheet__text">복사해서 교회 사이트 게시판 글쓰기에 붙여넣어요.</p>
+          <div class="menu">
+            <button type="button" data-a="title">${icon('copy')}<span><b>제목 복사</b><small>${esc(titleOf(read()))}</small></span></button>
+            <button type="button" data-a="body">${icon('copy')}<span><b>본문 복사</b><small>양식에 맞춰 복사돼요</small></span></button>
+            ${photos.length ? `<button type="button" data-a="photos">${icon('download')}<span><b>줄인 사진 저장</b><small>${photos.length}장</small></span></button>` : ''}
+            <a href="${esc(C.board.siteUrl)}" target="_blank" rel="noopener" data-a="open">${icon('external')}<span><b>교회 사이트 게시판 열기</b><small>청년회교제실</small></span></a>
+            <button type="button" data-a="reset" class="menu__danger">${icon('refresh')}<span><b>새로 쓰기</b><small>지금 쓴 내용을 비워요</small></span></button>
+          </div>`,
+      });
+      sh.el.querySelector('.menu').onclick = async (e) => {
+        const b = e.target.closest('[data-a]');
+        if (!b) return;
+        const a = b.dataset.a;
+        const d = read();
+        if (a === 'title') { toast((await copyRich(esc(titleOf(d)), titleOf(d))) ? '제목을 복사했어요' : '복사하지 못했어요', { tone: 'ok' }); }
+        if (a === 'body') {
+          if (!d.all.length && !d.share) { sh.close(); return showFormError(); }
+          toast((await copyRich(toHtml(d), toText(d))) ? '본문을 복사했어요. 게시판에 붙여넣으세요' : '복사하지 못했어요. 미리보기를 길게 눌러 복사해 주세요');
+        }
+        if (a === 'photos') savePhotos();
+        if (a === 'reset') {
+          sh.close();
+          const stash = { draft: store.get('draft', null), photos: photos.slice() };
+          store.del('draft'); photos.length = 0;
+          viewWrite();
+          toast('새로 쓰기 시작했어요', { action: { label: '되돌리기', onClick: () => { if (stash.draft) store.set('draft', stash.draft); photos.push(...stash.photos); viewWrite(); } } });
+          return;
+        }
+        if (a !== 'open') sh.close();
+      };
     };
-    $save.onclick = async () => {
+    async function savePhotos() {
       const files = photos.map((p) => new File([p.blob], p.name, { type: 'image/jpeg' }));
       if (navigator.canShare?.({ files })) {
         try { await navigator.share({ files }); return; } catch (e) { if (e.name === 'AbortError') return; }
       }
       photos.forEach((p) => { const a = document.createElement('a'); a.href = p.url; a.download = p.name; document.body.appendChild(a); a.click(); a.remove(); });
+    }
+    function showFormError() {
+      const $e = document.getElementById('formError');
+      $e.innerHTML = `${icon('alert')}참석자나 나눔을 먼저 적어 주세요`;
+      $e.hidden = false;
+      document.getElementById('sec-people').scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'center' });
+    }
+
+    // 게시판에 올리기
+    document.getElementById('postNow').onclick = async () => {
+      const d = read();
+      if (!d.all.length && !d.share) return showFormError();
+      const title = titleOf(d);
+      const ok = await openSheet({
+        title: '게시판에 올릴까요?',
+        body: `<div class="summary"><b>${esc(title)}</b><span>${icon('users')}참석 ${d.all.length}명</span><span>${icon('image')}사진 ${photos.length}장</span><span>${icon('user')}${esc(auth.me?.name || '내')} 이름으로 올라가요</span></div>
+          <p class="sheet__text">올리면 교회 사이트 청년회교제실에 바로 보여요.</p>`,
+        actions: [{ label: '취소', value: false }, { label: '올리기', value: true, kind: 'primary' }],
+      }).result;
+      if (!ok) return;
+      const total = photos.length + 1;
+      const pr = openSheet({ title: '올리는 중', body: progressBar('upProg', '준비 중'), dismissable: false });
+      const fail = (msg) => { pr.close(); toast(msg, { tone: 'error' }); };
+      const fileId = [];
+      const fileName = [];
+      for (const [i, ph] of photos.entries()) {
+        setProg('upProg', i, total, `사진 올리는 중 · ${i + 1}/${photos.length}`);
+        const r = await uploadPhoto(ph.blob, ph.name);
+        const f = r.status === 'ok' && r.result && typeof r.result === 'object' ? r.result : null;
+        if (!f?.fileId) return fail(`사진을 올리지 못했어요: ${errText(r)}`);
+        fileId.push(String(f.fileId));
+        fileName.push(String(f.fileName || ph.name));
+      }
+      setProg('upProg', photos.length, total, '글 올리는 중');
+      const r = await callApi('board_write', {
+        boardId: String(C.board.boardId), subject: title, content: toHtml(d),
+        ...(fileId.length ? { fileId, fileName } : {}),
+      });
+      if (r.status !== 'ok') return fail(`올리지 못했어요: ${errText(r)}`);
+      setProg('upProg', total, total, '다 올렸어요');
+      store.del('draft');
+      photos.splice(0).forEach((p) => URL.revokeObjectURL(p.url));
+      state.posts = null; state.loading = null;
+      setTimeout(() => { pr.close(); toast('게시판에 올렸어요'); location.hash = r.result?.uid ? `#/post/${r.result.uid}` : '#/'; }, 400);
     };
   }
 
-  /* ─── 화면: 설정 ─────────────────────────── */
+  /* ─── 화면: 내 정보 ─── */
   async function viewSettings() {
-    syncNav();
     const roster = getRoster();
     const B = C.board;
     const SAMPLES = {
@@ -921,65 +1223,63 @@
       member_search: { q: '' },
     };
     const sampleJson = (api) => JSON.stringify(SAMPLES[api] || {}, null, 2);
-    const defaultParams = sampleJson('board_post');
     const me = auth.me;
     $app.innerHTML = `
-      <div class="page-head"><h1>설정</h1><p>명단은 이 기기에만 저장돼요</p></div>
-      <div class="stack">
-        <section class="card stack" id="loginCard">
-          <h2 class="month" style="margin:0">내 계정</h2>
-          <div class="login-on"><span class="avatar" aria-hidden="true">${esc((me?.name || '나').slice(0, 1))}</span><div><b>${esc(me?.name || '로그인됨')}</b>${me?.sex ? ` ${esc(me.sex)}` : ''}${me?.admin ? ' <span class="badge">관리자</span>' : ''}<br><span class="small muted">${esc([me?.church, me?.userid].filter(Boolean).join(' · '))}</span></div></div>
-          <div class="btn-row"><button class="btn" id="logout">로그아웃</button></div>
-        </section>
-        <section class="card stack">
-          <h2 class="month" style="margin:0">이 기기 명단</h2>
-          <p class="small muted" style="margin:0">한 줄에 한 명씩. 부서 명단이 등록되기 전에만 작성 화면의 참석자 목록으로 쓰여요.</p>
-          <textarea class="textarea" id="roster" rows="8" placeholder="김가람&#10;이나래&#10;박한결">${esc(roster.join('\n'))}</textarea>
-          <div class="btn-row"><button class="btn btn--primary" id="saveRoster">명단 저장</button><button class="btn" id="fromPosts">교제록에서 이름 가져오기</button></div>
-        </section>
-        <section class="card stack">
-          <h2 class="month" style="margin:0">API 연결 확인</h2>
-          <p class="small muted" style="margin:0">게시판 API 파라미터를 시험해 보는 곳이에요. 결과가 <b>status: ok</b>로 나오면 성공입니다. 로그인돼 있으면 hash는 자동으로 붙어요.</p>
-          <label class="field"><span>API</span>
-            <select class="select" id="api">
-              <option value="board_post">게시글 목록·상세 (load_boardb_post)</option>
-              <option value="board_latest">최신글 (load_boardb_latest)</option>
-              <option value="board_comment">댓글 (load_boardb_comment)</option>
-              <option value="member_search">회원 검색 (load_member_search) — 로그인 필요</option>
-            </select>
-          </label>
-          <label class="field"><span>보낼 값 (JSON)</span><textarea class="textarea" id="params" rows="6" style="font-family:ui-monospace,Menlo,monospace;font-size:14px">${esc(defaultParams)}</textarea></label>
-          <div class="btn-row"><button class="btn btn--primary" id="run">호출하기</button><button class="btn" id="reload">교제록 다시 불러오기</button></div>
+      ${pageHead('내 정보')}
+      <section class="card profile">
+        ${avatar(me?.name, '', 'lg')}
+        <div class="profile__who"><b>${esc(me?.name || '로그인됨')}${me?.sex ? ` <span>${esc(me.sex)}</span>` : ''}</b><small>${esc([me?.church, me?.userid].filter(Boolean).join(' · '))}</small></div>
+        ${me?.admin ? '<span class="tag t-sun">관리자</span>' : ''}
+      </section>
+      <div class="list-card card">
+        <a href="${esc(C.board.siteUrl)}" target="_blank" rel="noopener">${icon('external')}<span>교회 사이트 청년회교제실</span>${icon('right', 'ic--end')}</a>
+        <button type="button" id="logout">${icon('logout')}<span>로그아웃</span>${icon('right', 'ic--end')}</button>
+      </div>
+      <details class="card fold">
+        <summary><span><b>이 기기 명단</b><small>부서 명단이 없을 때 쓰기 화면에서 써요</small></span>${icon('right', 'fold__ic')}</summary>
+        <div class="fold__body">
+          <textarea class="textarea" id="roster" rows="7" placeholder="한 줄에 한 명씩&#10;김가람&#10;이나래">${esc(roster.join('\n'))}</textarea>
+          <div class="btn-row"><button class="btn btn--primary btn--sm" type="button" id="saveRoster">저장</button><button class="btn btn--sm" type="button" id="fromPosts">교제록에서 이름 가져오기</button></div>
+        </div>
+      </details>
+      <details class="card fold">
+        <summary><span><b>API 연결 확인</b><small>관리용 · 생명선앱스 API를 직접 불러봐요</small></span>${icon('right', 'fold__ic')}</summary>
+        <div class="fold__body">
+          <select class="select" id="api" aria-label="API">
+            <option value="board_post">게시글 목록·상세 (load_boardb_post)</option>
+            <option value="board_latest">최신글 (load_boardb_latest)</option>
+            <option value="board_comment">댓글 (load_boardb_comment)</option>
+            <option value="member_search">회원 검색 (load_member_search)</option>
+          </select>
+          <textarea class="textarea mono" id="params" rows="6" aria-label="보낼 값">${esc(sampleJson('board_post'))}</textarea>
+          <div class="btn-row"><button class="btn btn--primary btn--sm" type="button" id="run">호출하기</button><button class="btn btn--sm" type="button" id="reload">교제록 다시 불러오기</button></div>
           <pre class="json" id="out" hidden></pre>
-        </section>
-      </div>`;
+        </div>
+      </details>`;
 
     const lines = (id) => document.getElementById(id).value.split('\n').map((s) => s.trim()).filter(Boolean);
-    document.getElementById('saveRoster').onclick = () => {
-      store.set('roster', [...new Set(lines('roster'))]);
-      toast('명단을 저장했어요');
-    };
-    document.getElementById('fromPosts').onclick = async () => {
+    document.getElementById('saveRoster').onclick = () => { store.set('roster', [...new Set(lines('roster'))]); toast('명단을 저장했어요'); };
+    document.getElementById('fromPosts').onclick = async (e) => {
+      e.target.disabled = true;
       const posts = await loadPosts();
+      await fillBodies();
+      e.target.disabled = false;
       const names = [...new Set([...lines('roster'), ...posts.flatMap((p) => p.people)])];
       document.getElementById('roster').value = names.join('\n');
-      toast(`${names.length}명을 채웠어요. 확인 후 저장을 눌러주세요`);
+      toast(`${names.length}명을 채웠어요. 확인하고 저장을 눌러 주세요`);
     };
-    document.getElementById('api').onchange = (e) => {
-      document.getElementById('params').value = sampleJson(e.target.value);
-    };
-
-    document.getElementById('logout').onclick = () => {
-      if (!confirm('로그아웃할까요?')) return;
+    document.getElementById('api').onchange = (e) => { document.getElementById('params').value = sampleJson(e.target.value); };
+    document.getElementById('logout').onclick = async () => {
+      if (!(await confirmSheet('로그아웃할까요?', '다음에 다시 깨사모 아이디로 로그인하면 돼요.', '로그아웃'))) return;
       signOut();
-      toast('로그아웃했어요');
       location.hash = '#/';
       route();
+      toast('로그아웃했어요');
     };
     document.getElementById('run').onclick = async () => {
       const $out = document.getElementById('out');
       let params;
-      try { params = JSON.parse(document.getElementById('params').value || '{}'); } catch { toast('JSON 모양이 올바르지 않아요'); return; }
+      try { params = JSON.parse(document.getElementById('params').value || '{}'); } catch { toast('JSON 모양이 올바르지 않아요', { tone: 'error' }); return; }
       $out.hidden = false;
       $out.textContent = '호출 중…';
       const r = await callApi(document.getElementById('api').value, params);
@@ -993,82 +1293,169 @@
 
   /* ─── 관리자 (Cloudflare 환경 변수 ADMINS 에 아이디가 있는 사람) ─── */
   const isAdmin = () => !!(auth.hash && auth.me?.admin);
-  const syncNav = () => {
-    const a = document.querySelector('.tabs a[data-tab="attendance"]');
-    if (a) a.hidden = !isAdmin();
-  };
   function viewAdminOnly() {
-    $app.innerHTML = `<div class="page-head"><h1>참석 흐름</h1></div><div class="empty">🔒 관리자만 볼 수 있는 화면이에요</div>`;
+    $app.innerHTML = pageHead('참석 흐름') + emptyState({ ic: 'lock', title: '관리자만 볼 수 있어요', desc: '청년회 관리자에게 권한을 받으면 볼 수 있어요' });
   }
 
-  /* ─── 로그인 화면 (로그인해야 교제록에 들어갈 수 있음) ─── */
+  /* ─── 메뉴 (컴퓨터: 왼쪽, 휴대폰: 아래) ─── */
+  const NAV = () => [
+    ['list', '#/', '교제록', 'book'],
+    ['prayers', '#/prayers', '기도제목', 'heart'],
+    ['write', '#/write', '쓰기', 'pen'],
+    ...(isAdmin() ? [['attendance', '#/attendance', '참석 흐름', 'chart']] : []),
+    ['settings', '#/settings', '내 정보', 'user'],
+  ];
+  const brandMark = '<span class="mark" aria-hidden="true"><i></i></span>';
+  function renderChrome(tab) {
+    const items = NAV();
+    const me = auth.me;
+    document.title = tab === 'list' ? APP : `${({ prayers: '기도제목', write: '교제록 쓰기', attendance: '참석 흐름', settings: '내 정보', post: '교제록' })[tab] || '교제록'} · ${APP}`;
+    document.getElementById('side').innerHTML = `
+      <a class="brand" href="#/">${brandMark}<span>${esc(APP)}</span></a>
+      <nav class="nav" aria-label="메뉴">${items.map(([k, href, label, ic]) => `<a href="${href}"${k === tab ? ' aria-current="page"' : ''}>${icon(ic)}<span>${label}</span></a>`).join('')}</nav>
+      <a class="side__me" href="#/settings">${avatar(me?.name, '', 'sm')}<span><b>${esc(me?.name || '')}</b><small>${esc(me?.church || '')}</small></span></a>`;
+    document.getElementById('tabbar').innerHTML = items.map(([k, href, label, ic]) =>
+      `<a href="${href}"${k === tab ? ' aria-current="page"' : ''}>${icon(ic)}<span>${label}</span></a>`).join('');
+    document.getElementById('mtop').innerHTML = `<a class="brand" href="#/">${brandMark}<span>${esc(APP)}</span></a><a class="mtop__me" href="#/settings" aria-label="내 정보">${avatar(me?.name, '', 'sm')}</a>`;
+  }
+
+  /* ─── 오른쪽 패널 (넓은 화면): 이번 주 기도제목 · 다가오는 일정 ─── */
+  async function renderPanel() {
+    const $p = document.getElementById('panel');
+    if (!isWide() || !auth.hash) { $p.innerHTML = ''; return; }
+    if (!$p.innerHTML) $p.innerHTML = `<section class="pblock"><h2>${icon('heart')}이번 주 기도제목</h2><span class="sk sk-line"></span><span class="sk sk-line" style="width:70%"></span></section>`;
+    const posts = await loadPosts();
+    await Promise.all(posts.slice(0, 6).map(fetchBody));
+    const latest = posts.find((p) => p.prayers.length);
+    const sched = await loadSchedule();
+    if (!auth.hash) return;
+    $p.innerHTML = `
+      <section class="pblock">
+        <h2>${icon('heart')}이번 주 기도제목${latest ? `<small>${tag(latest.dept)}</small>` : ''}</h2>
+        ${latest ? `<ul class="plist">${latest.prayers.slice(0, 5).map((x) => `<li>${avatar(x.name, '', 'xs')}<span><b>${esc(x.name)}</b>${esc(x.text)}</span></li>`).join('')}</ul>
+          <a class="pblock__more" href="#/prayers">기도제목 모두 보기${icon('right')}</a>` : '<p class="hint">아직 기도제목이 없어요</p>'}
+      </section>
+      <section class="pblock">
+        <h2>${icon('calendar')}다가오는 일정</h2>
+        ${sched.length ? `<ul class="slist">${sched.map((s) => {
+          const d = parseDate(s.start_date);
+          return `<li><span class="datebox"><b>${d ? d.getDate() : ''}</b><small>${d ? `${d.getMonth() + 1}월` : ''}</small></span><span><b>${esc(s.title || '')}</b><small>${[d ? WEEK[d.getDay()] + '요일' : '', String(s.start_time || '').slice(0, 5), s.location].filter(Boolean).map(esc).join(' · ')}</small></span></li>`;
+        }).join('')}</ul>` : '<p class="hint">예정된 일정이 없어요</p>'}
+      </section>`;
+  }
+  async function loadSchedule() {
+    if (state.schedule) return state.schedule;
+    const start = new Date();
+    const end = new Date(Date.now() + 45 * 86400e3);
+    const r = await callApi('schedule', { chId: String(C.board.chId), gCode: String(C.groupCode || ''), start: ymd(start), end: ymd(end), limit: '6' });
+    state.schedule = r.status === 'ok' && Array.isArray(r.list) ? r.list.slice(0, 5) : [];
+    return state.schedule;
+  }
+
+  /* ─── 로그인 화면 (로그인해야 들어갈 수 있음) ─── */
   function signOut() {
     auth.clear();
-    state.posts = null; state.loading = null; state.rosters = null;
+    state.posts = null; state.loading = null; state.rosters = null; state.schedule = null;
+    document.getElementById('panel').innerHTML = '';
   }
   function viewLogin() {
     $app.innerHTML = `
       <div class="login">
-        <div class="login__brand">
-          <span class="brand__mark login__mark" aria-hidden="true"></span>
-          <h1><b>${esc(C.groupName)}</b> 교제록</h1>
-          <p>깨사모 아이디로 로그인해 주세요</p>
+        <div class="login__sky" aria-hidden="true"><i class="c1"></i><i class="c2"></i><i class="c3"></i><i class="sun"></i></div>
+        <div class="login__inner">
+          <div class="login__brand">
+            <span class="mark mark--lg" aria-hidden="true"><i></i></span>
+            <h1>${esc(APP)}</h1>
+            <p>교제록과 기도제목을 함께 나눠요</p>
+          </div>
+          <form class="card login__card" id="loginForm" autocomplete="on" novalidate>
+            <label class="field"><span class="field__label">깨사모 아이디</span><input class="input" name="userid" value="${esc(store.get('lastUserid', ''))}" autocomplete="username" autocapitalize="off" spellcheck="false" enterkeyhint="next"></label>
+            <label class="field"><span class="field__label">비밀번호</span>
+              <span class="pw"><input class="input" name="password" type="password" autocomplete="current-password" enterkeyhint="go"><button type="button" class="pw__eye" aria-label="비밀번호 보기" aria-pressed="false">${icon('eye')}</button></span></label>
+            <p class="inline-error" id="loginError" role="alert" hidden></p>
+            <button class="btn btn--primary btn--lg btn--block" type="submit" id="loginBtn">로그인</button>
+          </form>
+          <p class="login__note">${icon('lock')}회원만 들어올 수 있어요. 비밀번호는 저장하지 않아요.</p>
         </div>
-        <form class="card login__card" id="loginForm" autocomplete="on">
-          <label class="field"><span>아이디</span><input class="input" name="userid" value="${esc(store.get('lastUserid', ''))}" autocomplete="username" autocapitalize="off" spellcheck="false" required></label>
-          <label class="field"><span>비밀번호</span><input class="input" name="password" type="password" autocomplete="current-password" required></label>
-          <p class="login__error" id="loginError" role="alert" hidden></p>
-          <button class="btn btn--primary login__btn" type="submit" id="loginBtn">로그인</button>
-        </form>
-        <p class="login__note">청년회교제실은 회원 전용이에요. 비밀번호는 저장하지 않고,<br>로그인 확인값만 이 기기에 남아요.</p>
       </div>`;
     const $f = document.getElementById('loginForm');
     const $btn = document.getElementById('loginBtn');
     const $err = document.getElementById('loginError');
-    $f[store.get('lastUserid', '') ? 'password' : 'userid'].focus();
+    const $eye = $f.querySelector('.pw__eye');
+    $eye.onclick = () => {
+      const show = $f.password.type === 'password';
+      $f.password.type = show ? 'text' : 'password';
+      $eye.setAttribute('aria-pressed', String(show));
+      $eye.setAttribute('aria-label', show ? '비밀번호 숨기기' : '비밀번호 보기');
+    };
+    const fieldErr = (msg, field) => {
+      $err.innerHTML = `${icon('alert')}${esc(msg)}`;
+      $err.hidden = false;
+      field?.classList.add('is-invalid');
+      field?.focus();
+    };
+    $f.addEventListener('input', (e) => { e.target.classList.remove('is-invalid'); $err.hidden = true; });
+    if (window.matchMedia('(min-width: 861px)').matches) $f[store.get('lastUserid', '') ? 'password' : 'userid'].focus();
     $f.onsubmit = async (e) => {
       e.preventDefault();
       const userid = String($f.userid.value || '').trim();
-      $btn.disabled = true; $btn.textContent = '로그인 중…'; $err.hidden = true;
+      if (!userid) return fieldErr('아이디를 적어 주세요', $f.userid);
+      if (!$f.password.value) return fieldErr('비밀번호를 적어 주세요', $f.password);
+      $btn.disabled = true; $btn.innerHTML = `${spinner}로그인 중`; $err.hidden = true;
       const r = await callApi('login', { Userid: userid, password: String($f.password.value || '') });
       if (r.status !== 'ok' || !r.hash) {
         $btn.disabled = false; $btn.textContent = '로그인';
-        $err.textContent = String(r.result || '로그인하지 못했어요');
-        $err.hidden = false;
         $f.password.value = '';
-        $f.password.focus();
-        return;
+        return fieldErr(String(r.result || '로그인하지 못했어요'), $f.password);
       }
       const m = await callApi('me', { hash: r.hash });
       signOut();
       auth.set(r.hash, m.status === 'ok' ? m.result : null);
       store.set('lastUserid', userid);
-      toast(`${m.result?.name || ''} 반가워요 👋`.trim());
       route();
+      toast(`${m.result?.name ? m.result.name + '님, ' : ''}반가워요`);
     };
   }
 
-  /* ─── 라우터 ─────────────────────────────── */
+  /* ─── 라우터 ─── */
+  let prevName = null;
   function route() {
     const locked = !auth.hash;
     document.body.classList.toggle('locked', locked);
-    if (locked) { window.scrollTo(0, 0); return viewLogin(); }
+    if (locked) { prevName = null; window.scrollTo(0, 0); document.title = APP; return viewLogin(); }
     const h = location.hash.replace(/^#\/?/, '');
     const [name, ...rest] = h.split('/');
-    const tab = name === 'post' || !name ? 'list' : name;
-    syncNav();
-    document.querySelectorAll('.tabs a').forEach((a) => {
-      if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
-    });
+    const tab = name === 'post' ? 'post' : (name || 'list');
+    if (!prevName || prevName === 'list') state.listScroll = window.scrollY;
+    const restore = name === '' && prevName === 'post';
+    prevName = name || 'list';
+    renderChrome(tab === 'post' ? 'list' : tab);
+    document.title = tab === 'list' ? APP : document.title;
     window.scrollTo(0, 0);
+    renderPanel();
     if (name === 'post') return viewPost(decodeURIComponent(rest.join('/')));
     if (name === 'prayers') return viewPrayers();
     if (name === 'attendance') return isAdmin() ? viewAttendance() : viewAdminOnly();
     if (name === 'write') return viewWrite();
     if (name === 'settings') return viewSettings();
-    return viewList();
+    return viewList({ restore });
   }
   window.addEventListener('hashchange', route);
+  window.matchMedia('(min-width: 1180px)').addEventListener?.('change', renderPanel);
+
+  // 인터넷 끊김 알림
+  const $off = document.getElementById('offline');
+  window.addEventListener('offline', () => { $off.hidden = false; });
+  window.addEventListener('online', () => { $off.hidden = true; toast('다시 연결됐어요'); });
+  if (!navigator.onLine) $off.hidden = false;
+
+  // "/" 키로 검색칸으로
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== '/' || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) return;
+    const s = document.querySelector('.search input');
+    if (s) { e.preventDefault(); s.focus(); }
+  });
+
   route();
 
   // 로그인돼 있으면 이름·관리자 여부를 새로 받아 둠 (관리자 목록이 바뀌어도 반영되도록)
@@ -1077,8 +1464,9 @@
       if (m.status !== 'ok' || !auth.hash) return;
       const was = isAdmin();
       auth.set(auth.hash, m.result);
-      syncNav();
-      if (was !== isAdmin() && /^#\/attendance/.test(location.hash)) route();
+      const cur = location.hash.replace(/^#\/?/, '').split('/')[0];
+      renderChrome(cur === 'post' || !cur ? 'list' : cur);
+      if (was !== isAdmin() && cur === 'attendance') route();
     });
   }
 })();

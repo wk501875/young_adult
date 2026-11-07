@@ -28,4 +28,10 @@ window.APP_CONFIG = {
     // 앱에서 바로 올리기 (boardb_write_json.php) 사용 여부
     writeEnabled: true,
   },
+
+  // 앨범 탭에 보여줄 교회 사이트 앨범 게시판 (청년회 부서 앨범)
+  albums: [
+    { boardId: 7159, name: '청년회 앨범' },
+    { boardId: 7161, name: '결혼식 앨범' },
+  ],
 };

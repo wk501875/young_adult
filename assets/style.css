@@ -1023,3 +1023,28 @@ body.locked .main > * { max-width: none; }
 /* 오른쪽 달력: 월정표 일정 색 */
 .cal__dots i[class*="ev-"], .evt__bar[class*="ev-"] { background: var(--ev); }
 button.evt { width: calc(100% + 16px); border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+
+/* ═══ 앨범 ═══════════════════════════════════ */
+.albs { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
+.alb { display: grid; gap: 10px; align-content: start; color: inherit; }
+.alb__pic { position: relative; display: block; aspect-ratio: 4 / 5; border-radius: 16px; overflow: hidden; background: var(--surface-3); border: 1px solid var(--line); }
+.alb__pic img { width: 100%; height: 100%; object-fit: cover; object-position: top; opacity: 0; transition: opacity .25s, transform .3s; }
+.alb__pic img.loaded { opacity: 1; }
+.alb:hover .alb__pic img { transform: scale(1.03); }
+.alb__txt { display: grid; gap: 2px; padding: 0 2px; }
+.alb__txt b { font-size: 15px; line-height: 1.4; letter-spacing: -0.02em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.alb__txt small { display: inline-flex; align-items: center; gap: 3px; font-size: 12.5px; color: var(--text-3); }
+.alb__txt small .ic { width: 13px; height: 13px; margin-left: 2px; }
+.alb--sk .alb__pic { border: 0; }
+.alb-sk { display: block; height: 420px; margin-top: 16px; border-radius: 14px; }
+.alb-note { display: flex; align-items: center; gap: 6px; margin: 14px 0 0; }
+.alb-note .ic { width: 15px; height: 15px; }
+.alb-pics { display: grid; gap: 12px; margin-top: 16px; }
+.alb-pic { display: block; width: 100%; max-width: 720px; margin: 0 auto; padding: 0; border: 0; border-radius: 14px; overflow: hidden; background: var(--surface-3); cursor: zoom-in; }
+.alb-pic img { display: block; width: 100%; height: auto; min-height: 240px; background-size: 100% auto; background-repeat: no-repeat; }
+.alb-pic img.loaded { min-height: 0; background: none; }
+@media (max-width: 860px) {
+  .albs { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .alb__pic { border-radius: 12px; }
+  .alb__txt b { font-size: 14px; }
+}

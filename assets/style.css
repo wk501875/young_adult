@@ -1025,7 +1025,7 @@ body.locked .main > * { max-width: none; }
 button.evt { width: calc(100% + 16px); border: 0; background: none; font: inherit; color: inherit; text-align: left; cursor: pointer; }
 
 /* ═══ 앨범 ═══════════════════════════════════ */
-.albs { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
+.albs { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 16px; }
 .alb { display: grid; gap: 10px; align-content: start; color: inherit; }
 .alb__pic { position: relative; display: block; aspect-ratio: 4 / 5; border-radius: 16px; overflow: hidden; background: var(--surface-3); border: 1px solid var(--line); }
 .alb__pic img { width: 100%; height: 100%; object-fit: cover; object-position: top; opacity: 0; transition: opacity .25s; }
@@ -1102,3 +1102,4 @@ button.evt { width: calc(100% + 16px); border: 0; background: none; font: inheri
   .main { padding-bottom: calc(110px + env(safe-area-inset-bottom)); }
 }
 @media (max-width: 560px) { .post__go { display: none !important; } }
+@media (min-width: 861px) { .post--photo .post__cover { aspect-ratio: 16 / 10; } }

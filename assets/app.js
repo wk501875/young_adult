@@ -349,6 +349,7 @@
     quote: '<path d="M10 7H6.5A2.5 2.5 0 0 0 4 9.5V12h5v5H4"/><path d="M20 7h-3.5A2.5 2.5 0 0 0 14 9.5V12h5v5h-5"/>',
     clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
     pin: '<path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/>',
+    zap: '<path d="M13.5 2.5 4.5 13.5h7l-1 8 9-11h-7z"/>',
     wifi: '<path d="M2.5 9a14 14 0 0 1 19 0"/><path d="M5.5 12.5a9.5 9.5 0 0 1 13 0"/><path d="M9 16a4.5 4.5 0 0 1 6 0"/><path d="M12 19.5v.1"/><path d="M3 3l18 18"/>',
   };
   const icon = (name, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
@@ -1861,6 +1862,265 @@
     };
   }
 
+  /* ═══ 화면: 번개 모임 (형제 번개 · 자매 번개 따로) ═══════
+   * 어느 게시판인지는 서버가 깨사모 회원정보의 성별로 정해요. 다른 쪽 게시판은 볼 수 없어요.
+   */
+  const bgWhen = (m) => {
+    const d = parseDate(m.date);
+    if (!d) return '';
+    const t = m.time ? ` ${Number(m.time.slice(0, 2)) < 12 ? '오전' : '오후'} ${((Number(m.time.slice(0, 2)) + 11) % 12) + 1}시${m.time.slice(3) !== '00' ? ` ${Number(m.time.slice(3))}분` : ''}` : '';
+    return `${d.getMonth() + 1}월 ${d.getDate()}일 (${WEEK[d.getDay()]})${t}`;
+  };
+  const mapLink = (m) => m.placeUrl || (m.place ? `https://map.naver.com/p/search/${encodeURIComponent(m.place)}` : '');
+  const daysLeft = (m) => Math.round((parseDate(m.date) - parseDate(ymd(new Date()))) / 86400e3);
+  function bgStatus(m) {
+    if (m.closed) return daysLeft(m) < 0 ? ['past', '지난 번개'] : ['closed', '마감'];
+    if (m.cap && m.count >= m.cap) return ['closed', '정원 마감'];
+    if (m.cap && m.cap - m.count <= 2) return ['soon', `${m.cap - m.count}자리 남음`];
+    const d = daysLeft(m);
+    return ['open', d === 0 ? '오늘' : d === 1 ? '내일' : '모집 중'];
+  }
+  const peopleStack = (names, n) => `<span class="stack">${names.slice(0, 4).map((nm) => avatar(nm, '', 'xs')).join('')}${n > 4 ? `<span class="stack__more">+${n - 4}</span>` : ''}</span>`;
+
+  let bgTab = 'up';
+  async function viewMeetups() {
+    $app.innerHTML = `
+      <header class="page-head"><div><h1>번개</h1><p id="bgSub">함께 밥 먹고, 운동하고, 놀러 가요</p></div>
+        <button type="button" class="btn btn--primary btn--sm" id="bgNew">${icon('plus')}번개 열기</button></header>
+      <div class="seg seg--full" id="bgTabs" role="group" aria-label="번개 보기">
+        <button type="button" data-t="up" aria-pressed="${bgTab === 'up'}">다가오는 번개</button>
+        <button type="button" data-t="past" aria-pressed="${bgTab === 'past'}">지난 번개</button>
+      </div>
+      <div id="bgList">${skeletonCards(3)}</div>`;
+    document.getElementById('bgNew').onclick = () => editMeetup(null);
+    document.getElementById('bgTabs').onclick = (e) => { const b = e.target.closest('[data-t]'); if (b) { bgTab = b.dataset.t; viewMeetups(); } };
+    const r = await callApi('bg_list');
+    const $l = document.getElementById('bgList');
+    if (!$l) return;
+    if (r.status !== 'ok') { $l.innerHTML = emptyState({ ic: 'alert', title: '번개를 불러오지 못했어요', desc: esc(errText(r)) }); return; }
+    document.getElementById('bgSub').innerHTML = `<span class="board-pill">${icon('lock')}${esc(r.boardName)} 번개</span> ${esc(r.boardName)}끼리만 보는 게시판이에요`;
+    const today = ymd(new Date());
+    const items = r.items.filter((m) => (bgTab === 'up' ? m.date >= today : m.date < today))
+      .sort((a, b) => (bgTab === 'up' ? 1 : -1) * (a.date.localeCompare(b.date) || (a.time || '').localeCompare(b.time || '')));
+    if (!items.length) {
+      $l.innerHTML = bgTab === 'up'
+        ? emptyState({ ic: 'zap', title: '다가오는 번개가 없어요', desc: '먼저 번개를 열어 보세요. 날짜와 장소만 정하면 돼요.', action: `<button type="button" class="btn btn--primary btn--sm" id="bgNew2">${icon('plus')}번개 열기</button>` })
+        : emptyState({ ic: 'zap', title: '지난 번개가 없어요' });
+      document.getElementById('bgNew2')?.addEventListener('click', () => editMeetup(null));
+      return;
+    }
+    $l.innerHTML = `<div class="feed">${items.map((m, i) => {
+      const [st, label] = bgStatus(m);
+      const d = parseDate(m.date);
+      const canJoin = bgTab === 'up' && (m.joined || st === 'open' || st === 'soon');
+      return `<article class="bg card${reduceMotion() ? '' : ' rise'}" style="--i:${Math.min(i, 8)}">
+        <a class="bg__main" href="#/meetup/${encodeURIComponent(m.id)}">
+          <span class="bg__date"><b>${d.getDate()}</b><small>${d.getMonth() + 1}월 ${WEEK[d.getDay()]}</small></span>
+          <span class="bg__body">
+            <span class="bg__tags"><span class="bgst bgst--${st}">${esc(label)}</span>${m.review ? '<span class="bgst bgst--review">후기</span>' : ''}</span>
+            <b class="bg__title">${esc(m.title)}</b>
+            <small>${icon('clock')}${esc(bgWhen(m))}${m.place ? ` · ${esc(m.place)}` : ''}</small>
+          </span>
+        </a>
+        <div class="bg__foot">
+          ${peopleStack(m.people || [], m.count)}
+          <span class="bg__count">${m.count}${m.cap ? `/${m.cap}` : ''}명 함께해요</span>
+          ${canJoin ? `<button type="button" class="btn btn--sm ${m.joined ? 'btn--joined' : 'btn--primary'}" data-join="${esc(m.id)}" data-on="${m.joined ? '' : '1'}">${m.joined ? `${icon('check')}참여 중` : '나도 갈래'}</button>` : ''}
+        </div>
+      </article>`;
+    }).join('')}</div>`;
+    $l.querySelectorAll('[data-join]').forEach((b) => {
+      b.onclick = async () => {
+        const on = !!b.dataset.on;
+        if (!on && !(await confirmSheet('참여를 취소할까요?', '취소해도 다시 "나도 갈래"를 누를 수 있어요.', '취소하기', 'danger'))) return;
+        b.disabled = true; b.innerHTML = spinner;
+        const res = await callApi('bg_join', { id: b.dataset.join, on });
+        if (res.status !== 'ok') { toast(errText(res), { tone: 'error' }); }
+        else toast(on ? '참여했어요' : '참여를 취소했어요');
+        viewMeetups();
+      };
+    });
+  }
+
+  async function viewMeetup(id) {
+    const back = `<a class="back" href="#/meetup">${icon('left')}번개</a>`;
+    $app.innerHTML = `${back}${skeletonCards(1)}`;
+    const r = await callApi('bg_get', { id });
+    if (!document.querySelector('.back')) return;
+    if (r.status !== 'ok') { $app.innerHTML = back + emptyState({ ic: 'alert', title: '번개를 찾을 수 없어요', desc: esc(errText(r)) }); return; }
+    const m = r.item;
+    const joined = r.joins.some((j) => j.userid === r.me.userid);
+    const full = m.cap && r.joins.length >= m.cap;
+    const past = m.date < ymd(new Date());
+    const st = m.closedNow ? (past ? ['past', '지난 번개'] : ['closed', '마감']) : full ? ['closed', '정원 마감'] : ['open', '모집 중'];
+    const link = mapLink(m);
+    const isMine = r.me.userid === m.by.userid;
+    $app.innerHTML = `
+      ${back}
+      <article class="card detail bgd">
+        <div class="bgd__top"><span class="bgst bgst--${st[0]}">${st[1]}</span><span class="board-pill">${icon('lock')}${esc(r.boardName)} 번개</span></div>
+        <h1 class="detail__title">${esc(m.title)}</h1>
+        <div class="detail__by">${avatar(m.by.name)}<div><b>${esc(m.by.name)}</b><span>번개를 열었어요${m.edited ? ' · 고침' : ''}</span></div></div>
+        <ul class="bgd__info">
+          <li>${icon('calendar')}<span><b>${esc(bgWhen(m))}</b>${!past ? `<small>${daysLeft(m) === 0 ? '오늘이에요' : `${daysLeft(m)}일 남았어요`}</small>` : ''}</span></li>
+          ${m.place ? `<li>${icon('pin')}<span><b>${esc(m.place)}</b>${link ? `<a href="${esc(link)}" target="_blank" rel="noopener" class="link-btn">지도 보기${icon('external')}</a>` : ''}</span></li>` : ''}
+          <li>${icon('users')}<span><b>${r.joins.length}${m.cap ? ` / ${m.cap}` : ''}명</b><small>${m.cap ? (full ? '정원이 다 찼어요' : `${m.cap - r.joins.length}자리 남았어요`) : '정원 없음'}</small></span></li>
+          ${m.deadline ? `<li>${icon('clock')}<span><b>${esc(m.deadline.slice(5, 10).replace('-', '/'))} ${esc(m.deadline.slice(11))} 마감</b></span></li>` : ''}
+        </ul>
+        ${m.note ? `<p class="sec__text bgd__note">${esc(m.note)}</p>` : ''}
+        <section class="sec"><h2>${icon('users')}함께하는 사람<small>${r.joins.length}명</small></h2>
+          <div class="people">${r.joins.map((j) => `<span class="person">${esc(j.name)}${j.userid === m.by.userid ? ' <small>· 연 사람</small>' : ''}</span>`).join('')}</div>
+        </section>
+        ${m.review || (past && r.isOwner) ? `<section class="sec"><h2>${icon('pen')}후기</h2>
+          ${m.review ? `<p class="sec__text">${esc(m.review)}</p>` : '<p class="hint">번개가 끝났어요. 후기를 남겨 보세요.</p>'}
+          <div class="btn-row" style="margin-top:10px">
+            ${r.isOwner ? `<button type="button" class="btn btn--sm" id="bgReview">${icon('pen')}${m.review ? '후기 고치기' : '후기 쓰기'}</button>` : ''}
+            ${m.review ? `<button type="button" class="btn btn--sm" id="bgToLog">${icon('book')}교제록에 넣기</button>` : ''}
+          </div></section>` : ''}
+        <section class="sec" id="bgComments"></section>
+        ${r.isOwner ? `<div class="bgd__owner">
+          <button type="button" class="btn btn--ghost btn--sm" id="bgEdit">${icon('pen')}고치기</button>
+          ${!past ? `<button type="button" class="btn btn--ghost btn--sm" id="bgClose">${m.closed ? '다시 모집하기' : '마감하기'}</button>` : ''}
+          <button type="button" class="btn btn--ghost btn--sm danger-text" id="bgDel">${icon('trash')}지우기</button>
+        </div>` : ''}
+      </article>
+      ${!past ? `<div class="actionbar actionbar--center">
+        ${joined
+          ? (isMine ? `<span class="hint">내가 연 번개예요</span>` : `<button type="button" class="btn btn--lg btn--joined" id="bgJoin" data-on="">${icon('check')}참여 중 · 취소하기</button>`)
+          : `<button type="button" class="btn btn--primary btn--lg" id="bgJoin" data-on="1"${m.closedNow || full ? ' disabled' : ''}>${m.closedNow || full ? '마감됐어요' : '나도 갈래'}</button>`}
+      </div>` : ''}`;
+
+    document.getElementById('bgJoin')?.addEventListener('click', async (e) => {
+      const b = e.currentTarget;
+      const on = !!b.dataset.on;
+      if (!on && !(await confirmSheet('참여를 취소할까요?', '취소해도 다시 "나도 갈래"를 누를 수 있어요.', '취소하기', 'danger'))) return;
+      b.disabled = true; b.innerHTML = `${spinner}${on ? '참여하는 중' : '취소하는 중'}`;
+      const res = await callApi('bg_join', { id, on });
+      if (res.status !== 'ok') toast(errText(res), { tone: 'error' }); else toast(on ? '참여했어요. 함께해요!' : '참여를 취소했어요');
+      viewMeetup(id);
+    });
+    document.getElementById('bgEdit')?.addEventListener('click', () => editMeetup(m));
+    document.getElementById('bgClose')?.addEventListener('click', async () => {
+      const res = await callApi('bg_close', { id, closed: !m.closed });
+      if (res.status !== 'ok') return toast(errText(res), { tone: 'error' });
+      toast(m.closed ? '다시 모집해요' : '마감했어요'); viewMeetup(id);
+    });
+    document.getElementById('bgDel')?.addEventListener('click', async () => {
+      if (!(await confirmSheet('번개를 지울까요?', '참여자와 댓글도 함께 지워지고 되돌릴 수 없어요.', '지우기', 'danger'))) return;
+      const res = await callApi('bg_delete', { id });
+      if (res.status !== 'ok') return toast(errText(res), { tone: 'error' });
+      toast('번개를 지웠어요'); location.hash = '#/meetup';
+    });
+    document.getElementById('bgReview')?.addEventListener('click', async () => {
+      const sh = openSheet({
+        title: '후기',
+        body: `<textarea class="textarea" id="rvText" rows="6" maxlength="2000" placeholder="어땠는지 짧게 남겨 주세요">${esc(m.review || '')}</textarea>`,
+        actions: [{ label: '취소', value: null }, { label: '저장', value: 'save', kind: 'primary' }],
+      });
+      if ((await sh.result) !== 'save') return;
+      const res = await callApi('bg_review', { id, review: sh.el.querySelector('#rvText').value });
+      if (res.status !== 'ok') return toast(errText(res), { tone: 'error' });
+      toast('후기를 남겼어요'); viewMeetup(id);
+    });
+    // 후기를 이번 주 교제록 "기타"에 넣기
+    document.getElementById('bgToLog')?.addEventListener('click', () => {
+      const d = store.get('draft', null) || { date: ymd(new Date()), writer: auth.me?.name || '', people: [], extra: '', verse: '', verseNote: '', share: '', prayers: {}, etc: '' };
+      const line = `⚡ 번개 · ${m.title} (${bgWhen(m)}${m.place ? `, ${m.place}` : ''}) — ${r.joins.length}명\n${m.review}`;
+      d.etc = [d.etc || d.bungae || '', line].filter(Boolean).join('\n\n');
+      store.set('draft', d);
+      toast('교제록 "기타"에 넣었어요');
+      location.hash = '#/write';
+    });
+    drawBgComments(id, r);
+  }
+
+  function drawBgComments(id, r) {
+    const $c = document.getElementById('bgComments');
+    const list = r.comments;
+    const draw = () => {
+      $c.innerHTML = `<h2>${icon('msg')}댓글<small>${list.length || ''}</small></h2>
+        <ul class="cmts">${list.length ? list.map((x) => {
+          const mine = x.userid === r.me.userid;
+          return `<li class="${x.pending ? 'is-pending' : ''}">${avatar(x.name, '', 'sm')}<div class="cmt__body"><div class="cmt__head"><b>${esc(x.name)}</b><time>${x.pending ? '보내는 중' : esc(rel(x.at ? new Date(x.at) : null))}</time>${mine && !x.pending ? `<button type="button" class="cmt__del" data-del="${esc(x.cid)}" aria-label="내 댓글 지우기">${icon('trash')}</button>` : ''}</div><p>${esc(x.text)}</p></div></li>`;
+        }).join('') : '<li class="cmt__empty">"저도 갈게요!" 처럼 한마디 남겨 보세요</li>'}</ul>
+        <form class="cmt-form" id="bgCmtForm">${avatar(r.me.name, '', 'sm')}
+          <div class="cmt-form__box"><textarea name="t" rows="1" maxlength="200" placeholder="댓글 남기기" aria-label="댓글"></textarea>
+          <button class="cmt-form__send" type="submit" aria-label="댓글 등록" disabled>${icon('send')}</button></div></form>`;
+      const $f = document.getElementById('bgCmtForm');
+      const $t = $f.t;
+      const $s = $f.querySelector('button');
+      const size = () => { if (!$t.value) { $t.style.height = ''; return; } $t.style.height = '0px'; $t.style.height = `${Math.min(Math.max($t.scrollHeight, 34), 120)}px`; };
+      $t.addEventListener('input', () => { size(); $s.disabled = !$t.value.trim(); });
+      $f.onsubmit = async (e) => {
+        e.preventDefault();
+        const text = $t.value.trim();
+        if (!text) return;
+        const temp = { cid: 'tmp', name: r.me.name, userid: r.me.userid, text, pending: true };
+        list.push(temp); draw();
+        const res = await callApi('bg_comment', { id, text });
+        const i = list.indexOf(temp);
+        if (res.status !== 'ok') { list.splice(i, 1); draw(); document.querySelector('#bgCmtForm textarea').value = text; toast(errText(res), { tone: 'error' }); return; }
+        list[i] = { ...temp, pending: false, cid: res.result.cid, at: new Date().toISOString() };
+        draw();
+      };
+      $c.querySelectorAll('[data-del]').forEach((b) => {
+        b.onclick = async () => {
+          if (!(await confirmSheet('댓글을 지울까요?', '지운 댓글은 되돌릴 수 없어요.', '지우기', 'danger'))) return;
+          const i = list.findIndex((x) => x.cid === b.dataset.del);
+          const [gone] = list.splice(i, 1); draw();
+          const res = await callApi('bg_comment_del', { id, cid: gone.cid });
+          if (res.status !== 'ok') { list.splice(i, 0, gone); draw(); toast(errText(res), { tone: 'error' }); }
+        };
+      });
+    };
+    draw();
+  }
+
+  // 번개 열기 · 고치기
+  function editMeetup(m) {
+    const tomorrow = ymd(new Date(Date.now() + 86400e3));
+    const d = m || { title: '', date: tomorrow, time: '19:00', place: '', placeUrl: '', cap: '', deadline: '', note: '' };
+    const sh = openSheet({
+      title: m ? '번개 고치기' : '번개 열기',
+      body: `<form class="evform" id="bgForm" novalidate>
+        <label class="field"><span class="field__label">무엇을 할까요</span><input class="input" name="title" value="${esc(d.title)}" maxlength="60" placeholder="예: 금요일 저녁 마라탕 번개"></label>
+        <div class="grid-2">
+          <label class="field"><span class="field__label">날짜</span><input class="input" type="date" name="date" value="${esc(d.date)}" min="${m ? '' : ymd(new Date())}"></label>
+          <label class="field"><span class="field__label">시간</span><input class="input" type="time" name="time" value="${esc(d.time)}" step="600"></label>
+        </div>
+        <label class="field"><span class="field__label">장소</span><input class="input" name="place" value="${esc(d.place)}" maxlength="60" placeholder="예: 라페스타 마라공방"></label>
+        <label class="field"><span class="field__label">장소 링크 <small class="muted">(선택 · 비우면 장소 이름으로 지도 검색)</small></span><input class="input" name="placeUrl" value="${esc(d.placeUrl)}" placeholder="https://naver.me/..."></label>
+        <div class="grid-2">
+          <label class="field"><span class="field__label">정원 <small class="muted">(선택)</small></span><input class="input" type="number" name="cap" value="${esc(d.cap || '')}" min="0" max="200" inputmode="numeric" placeholder="제한 없음"></label>
+          <label class="field"><span class="field__label">마감 <small class="muted">(선택)</small></span><input class="input" type="datetime-local" name="deadline" value="${esc(d.deadline)}"></label>
+        </div>
+        <label class="field"><span class="field__label">하고 싶은 말</span><textarea class="textarea" name="note" rows="3" maxlength="1000" placeholder="회비, 준비물, 누구나 환영 등">${esc(d.note)}</textarea></label>
+        <p class="inline-error" id="bgErr" role="alert" hidden></p>
+      </form>`,
+      actions: [{ label: '취소', value: null }, { label: m ? '저장' : '번개 열기', value: 'save', kind: 'primary' }],
+    });
+    const f = sh.el.querySelector('#bgForm');
+    f.title.focus();
+    const btn = sh.el.querySelector('.btn--primary');
+    btn.onclick = async () => {
+      const err = sh.el.querySelector('#bgErr');
+      const fd = new FormData(f);
+      const v = Object.fromEntries(fd.entries());
+      const bad = (msg, el) => { err.innerHTML = `${icon('alert')}${msg}`; err.hidden = false; el?.focus(); };
+      if (!String(v.title).trim()) return bad('무엇을 할지 적어 주세요', f.title);
+      if (!v.date) return bad('날짜를 골라 주세요', f.date);
+      if (v.placeUrl && !/^https:\/\//.test(v.placeUrl)) return bad('장소 링크는 https:// 로 시작해야 해요', f.placeUrl);
+      if (v.deadline && v.deadline.slice(0, 10) > v.date) return bad('마감은 번개 날짜보다 늦을 수 없어요', f.deadline);
+      btn.disabled = true; btn.innerHTML = `${spinner}저장 중`;
+      const res = await callApi('bg_save', { id: m?.id || '', meetup: v });
+      if (res.status !== 'ok') { btn.disabled = false; btn.textContent = m ? '저장' : '번개 열기'; return bad(esc(errText(res))); }
+      sh.close();
+      toast(m ? '고쳤어요' : '번개를 열었어요');
+      location.hash = `#/meetup/${encodeURIComponent(res.result.id)}`;
+      if (m) viewMeetup(m.id);
+    };
+  }
+
   /* ─── 관리자 (Cloudflare 환경 변수 ADMINS 에 아이디가 있는 사람) ─── */
   const isAdmin = () => !!(auth.hash && auth.me?.admin);
   function viewAdminOnly(title = '참석 흐름') {
@@ -1871,6 +2131,7 @@
   const NAV = () => [
     ['list', '#/', '홈', 'book'],
     ['calendar', '#/calendar', '일정', 'calendar'],
+    ['meetup', '#/meetup', '번개', 'zap'],
     ['write', '#/write', '쓰기', 'pen'],
     ['prayers', '#/prayers', '기도제목', 'heart'],
     ...(isAdmin() ? [['attendance', '#/attendance', '참석 흐름', 'chart'], ['admin', '#/admin', '관리', 'users']] : []),
@@ -1883,7 +2144,7 @@
     const me = auth.me;
     const n = newCount();
     const badge = (k) => (k === 'list' && n ? `<span class="badge" aria-label="새 글 ${n}개">${n > 99 ? '99+' : n}</span>` : '');
-    document.title = tab === 'list' ? APP : `${({ prayers: '기도제목', write: '교제록 쓰기', attendance: '참석 흐름', settings: '내 정보', calendar: '일정', admin: '관리' })[tab] || '교제록'} · ${APP}`;
+    document.title = tab === 'list' ? APP : `${({ prayers: '기도제목', write: '교제록 쓰기', attendance: '참석 흐름', settings: '내 정보', calendar: '일정', admin: '관리', meetup: '번개' })[tab] || '교제록'} · ${APP}`;
     const $top = document.getElementById('topbar');
     if (!document.getElementById('gq')) $top.innerHTML = `
       <a class="brand" href="#/">${brandMark}<span>${esc(APP)}</span></a>
@@ -1907,8 +2168,8 @@
         <a class="nav-sub" href="${esc(C.board.siteUrl)}" target="_blank" rel="noopener">${icon('external')}<span>교회 사이트 교제실</span></a>
       </div>
       <a class="side__me" href="#/settings">${avatar(me?.name, '', 'sm')}<span><b>${esc(me?.name || '')}</b><small>${esc(me?.church || '')}</small></span>${icon('right', 'ic--end')}</a>`;
-    // 휴대폰 아래 탭은 다섯 개만 (참석 흐름·관리는 내 정보에서)
-    document.getElementById('tabbar').innerHTML = items.filter(([k]) => k !== 'attendance' && k !== 'admin').map(([k, href, label, ic]) =>
+    // 휴대폰 아래 탭은 다섯 개만 (쓰기는 홈의 쓰기 칸, 참석 흐름·관리는 내 정보에서)
+    document.getElementById('tabbar').innerHTML = items.filter(([k]) => !['attendance', 'admin', 'write'].includes(k)).map(([k, href, label, ic]) =>
       `<a href="${href}"${k === tab ? ' aria-current="page"' : ''}${k === 'write' ? ' id="writeTab"' : ''}>${icon(ic)}<span>${label}</span>${k === 'list' && n ? '<i class="dotbadge" aria-hidden="true"></i>' : ''}</a>`).join('');
     renderSideDepts();
   }
@@ -2148,6 +2409,7 @@
     if (name === 'write') return viewWrite();
     if (name === 'settings') return viewSettings();
     if (name === 'calendar') return viewCalendar();
+    if (name === 'meetup') return rest.length ? viewMeetup(decodeURIComponent(rest.join('/'))) : viewMeetups();
     if (name === 'admin') return viewAdmin();
     return viewList({ restore });
   }

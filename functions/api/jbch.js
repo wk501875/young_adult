@@ -300,6 +300,151 @@ async function calendar(env, api, p, raw) {
   return { status: 'error', result: `허용되지 않은 API: ${api}` };
 }
 
+/* ═══ 번개 모임 ═════════════════════════════════
+ * 형제 번개(m) · 자매 번개(f)를 따로 저장하고, 깨사모 회원정보의 성별로만 고름.
+ * 화면에서 보낸 값으로는 다른 게시판에 닿을 수 없음 (키에 게시판이 들어감).
+ *  bgm:{b}:{id}              번개 하나 (값: 전체, metadata: 목록용 요약)
+ *  bgj:{b}:{id}:{userid}     참여 (metadata: 이름·시각)
+ *  bgc:{b}:{id}:{시각}-{id}  댓글 (metadata: 이름·내용)
+ */
+const boardOf = (u) => (/자매|여/.test(u.sex || '') ? 'f' : /형제|남/.test(u.sex || '') ? 'm' : '');
+const BOARD_NAME = { m: '형제', f: '자매' };
+async function listAll(env, prefix) {
+  const out = [];
+  let cursor;
+  for (let i = 0; i < 20; i++) {
+    const r = await env.CAL.list({ prefix, cursor });
+    out.push(...r.keys);
+    if (r.list_complete || !r.cursor) break;
+    cursor = r.cursor;
+  }
+  return out;
+}
+const isTime = (s) => !s || /^\d{2}:\d{2}$/.test(s);
+function cleanMeetup(m) {
+  const title = String(m?.title || '').trim().slice(0, 60);
+  const date = String(m?.date || '');
+  const time = String(m?.time || '');
+  if (!title || !isDate(date) || !isTime(time)) return { error: '제목·날짜·시간을 확인해 주세요' };
+  const placeUrl = String(m?.placeUrl || '').trim().slice(0, 300);
+  if (placeUrl && !/^https:\/\//.test(placeUrl)) return { error: '장소 링크는 https:// 로 시작해야 해요' };
+  const cap = Math.max(0, Math.min(200, parseInt(m?.cap, 10) || 0));
+  const deadline = String(m?.deadline || '');
+  if (deadline && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(deadline)) return { error: '마감 시각을 확인해 주세요' };
+  return {
+    m: {
+      title, date, time, cap, deadline,
+      place: String(m?.place || '').trim().slice(0, 60), placeUrl,
+      note: String(m?.note || '').trim().slice(0, 1000),
+    },
+  };
+}
+const summary = (m) => ({ title: m.title, date: m.date, time: m.time, place: m.place, cap: m.cap, deadline: m.deadline, closed: !!m.closed, by: m.by?.name || '', byId: m.by?.userid || '', review: !!m.review });
+// 마감 판단: 직접 마감했거나, 마감 시각이 지났거나, 모임 날이 지났으면
+function isClosed(m, now = new Date()) {
+  if (m.closed) return true;
+  const kst = new Date(now.getTime() + 9 * 3600e3).toISOString().slice(0, 16); // 한국 시각 YYYY-MM-DDTHH:MM
+  if (m.deadline && kst > m.deadline) return true;
+  return kst.slice(0, 10) > m.date;
+}
+
+async function meetup(env, api, p, raw) {
+  const kv = needKV(env);
+  if (kv) return kv;
+  const who = await whoAmI(env, p.hash);
+  if (who.error) return who.error;
+  const b = boardOf(who.u);
+  if (!b) return { status: 'error', result: '깨사모 회원정보에 성별이 없어 번개 게시판을 열 수 없어요' };
+  const me = { userid: who.u.userid, name: who.u.name };
+  const base = { board: b, boardName: BOARD_NAME[b] };
+
+  if (api === 'bg_list') {
+    const [ms, js] = await Promise.all([listAll(env, `bgm:${b}:`), listAll(env, `bgj:${b}:`)]);
+    const joins = new Map();
+    for (const k of js) {
+      const id = k.name.split(':')[2];
+      if (!joins.has(id)) joins.set(id, []);
+      joins.get(id).push({ userid: k.name.split(':').slice(3).join(':'), ...(k.metadata || {}) });
+    }
+    const items = ms.map((k) => {
+      const id = k.name.split(':')[2];
+      const js2 = (joins.get(id) || []).sort((a, c) => String(a.at).localeCompare(String(c.at)));
+      const s = k.metadata || {};
+      return { id, ...s, closed: isClosed(s), joined: js2.some((j) => j.userid === me.userid), count: js2.length, people: js2.slice(0, 5).map((j) => j.name) };
+    });
+    return { status: 'ok', ...base, me, items };
+  }
+
+  const id = String(raw.id || '');
+  const key = `bgm:${b}:${id}`;
+  if (api === 'bg_save') {
+    const { m, error } = cleanMeetup(raw.meetup);
+    if (error) return { status: 'error', result: error };
+    let cur = null;
+    if (id) {
+      cur = await env.CAL.get(key, 'json');
+      if (!cur) return { status: 'error', result: '번개를 찾지 못했어요' };
+      if (cur.by.userid !== me.userid && !who.superAdmin) return { status: 'error', result: '연 사람만 고칠 수 있어요' };
+    }
+    const next = { ...(cur || { id: crypto.randomUUID().slice(0, 8), by: me, at: new Date().toISOString(), closed: false }), ...m, edited: cur ? new Date().toISOString() : undefined };
+    await env.CAL.put(`bgm:${b}:${next.id}`, JSON.stringify(next), { metadata: summary(next) });
+    // 연 사람은 자동으로 참여
+    if (!cur) await env.CAL.put(`bgj:${b}:${next.id}:${me.userid}`, '1', { metadata: { name: me.name, at: new Date().toISOString() } });
+    return { status: 'ok', result: { id: next.id } };
+  }
+
+  const cur = id ? await env.CAL.get(key, 'json') : null;
+  if (!cur) return { status: 'error', result: '번개를 찾지 못했어요' };
+  const isOwner = cur.by.userid === me.userid || who.superAdmin;
+
+  if (api === 'bg_get') {
+    const [js, cs] = await Promise.all([listAll(env, `bgj:${b}:${id}:`), listAll(env, `bgc:${b}:${id}:`)]);
+    const joins = js.map((k) => ({ userid: k.name.split(':').slice(3).join(':'), ...(k.metadata || {}) })).sort((a, c) => String(a.at).localeCompare(String(c.at)));
+    const comments = cs.map((k) => ({ cid: k.name.split(':').slice(3).join(':'), ...(k.metadata || {}) })).sort((a, c) => a.cid.localeCompare(c.cid));
+    return { status: 'ok', ...base, me, isOwner, item: { ...cur, closedNow: isClosed(cur) }, joins, comments };
+  }
+  if (api === 'bg_join') {
+    const jk = `bgj:${b}:${id}:${me.userid}`;
+    if (raw.on) {
+      if (isClosed(cur)) return { status: 'error', result: '마감된 번개예요' };
+      if (cur.cap) {
+        const n = (await listAll(env, `bgj:${b}:${id}:`)).filter((k) => !k.name.endsWith(`:${me.userid}`)).length;
+        if (n >= cur.cap) return { status: 'error', result: '정원이 다 찼어요' };
+      }
+      await env.CAL.put(jk, '1', { metadata: { name: me.name, at: new Date().toISOString() } });
+    } else {
+      if (cur.by.userid === me.userid) return { status: 'error', result: '연 사람은 참여를 취소할 수 없어요. 번개를 지우거나 마감해 주세요' };
+      await env.CAL.delete(jk);
+    }
+    return { status: 'ok' };
+  }
+  if (api === 'bg_comment') {
+    const text = String(raw.text || '').trim().slice(0, 200);
+    if (text.length < 1) return { status: 'error', result: '댓글을 적어 주세요' };
+    const cid = `${Date.now()}-${me.userid}`;
+    await env.CAL.put(`bgc:${b}:${id}:${cid}`, '1', { metadata: { name: me.name, userid: me.userid, text, at: new Date().toISOString() } });
+    return { status: 'ok', result: { cid } };
+  }
+  if (api === 'bg_comment_del') {
+    const cid = String(raw.cid || '');
+    if (!cid.endsWith(`-${me.userid}`) && !who.superAdmin) return { status: 'error', result: '내 댓글만 지울 수 있어요' };
+    await env.CAL.delete(`bgc:${b}:${id}:${cid}`);
+    return { status: 'ok' };
+  }
+  if (!isOwner) return { status: 'error', result: '연 사람만 할 수 있어요' };
+  if (api === 'bg_close' || api === 'bg_review') {
+    const next = api === 'bg_close' ? { ...cur, closed: !!raw.closed } : { ...cur, review: String(raw.review || '').trim().slice(0, 2000) };
+    await env.CAL.put(key, JSON.stringify(next), { metadata: summary(next) });
+    return { status: 'ok' };
+  }
+  if (api === 'bg_delete') {
+    const keys = [key, ...(await listAll(env, `bgj:${b}:${id}:`)).map((k) => k.name), ...(await listAll(env, `bgc:${b}:${id}:`)).map((k) => k.name)];
+    for (const k of keys) await env.CAL.delete(k);
+    return { status: 'ok' };
+  }
+  return { status: 'error', result: `허용되지 않은 API: ${api}` };
+}
+
 // 월정표 원본 그림: 올리기(multipart) · 받기
 async function calImagePut(env, form) {
   const kv = needKV(env);
@@ -382,6 +527,11 @@ export async function onRequestPost({ request, env }) {
   const clean = cleanParams(params);
 
   // 월정표: 로그인 필요, 값 모양은 calendar() 안에서 직접 확인
+  // 번개: 로그인 필요, 형제/자매 게시판은 서버에서 회원정보 성별로 정함
+  if (/^bg_/.test(api)) {
+    if (!clean.hash) return json({ status: 'error', result: 'hash가 필요합니다' });
+    return json(await meetup(env, api, clean, params || {}));
+  }
   if (/^cal_/.test(api)) {
     if (!clean.hash) return json({ status: 'error', result: 'hash가 필요합니다' });
     if (api === 'cal_img_get') return calImageGet(env, clean);

@@ -319,7 +319,7 @@
     let t = store.get('theme', 'light');
     if (t === 'system') t = darkMQ.matches ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', t);
-    document.getElementById('themeColor')?.setAttribute('content', t === 'dark' ? '#101317' : '#f4f6f9');
+    document.getElementById('themeColor')?.setAttribute('content', t === 'dark' ? '#131917' : '#f6eedb');
   }
   darkMQ.addEventListener?.('change', applyTheme);
   applyTheme();
@@ -695,17 +695,25 @@
       }
       $list.innerHTML = `<div class="feed">${rows.map((p, i) => {
         const excerpt = q && !p.share.toLowerCase().includes(q) ? findSnippet(p.text, q) : summaryOf(p);
-        return `
-          <a class="post card${animate && !reduceMotion() ? ' rise' : ''}" style="--i:${Math.min(i, 8)}" href="#/post/${encodeURIComponent(p.id)}">
-            <div class="post__head">
-              ${avatar(p.author)}
-              <div class="post__who"><b>${esc(p.author || '작성자')}</b><span>${fullDate(p.date)}${p.dept ? ` · <em class="c-${tone(p.dept)}">${esc(p.dept)}</em>` : ''}</span></div>
-              ${isNew(p) ? '<span class="tag tag--new">새 글</span>' : ''}
-            </div>
+        const photo = p.photos.length > 0;
+        const text = `
             <h3 class="post__title">${highlight(p.title, state.q)}</h3>
             ${p.verse ? `<p class="post__verse">${icon('quote')}${highlight(p.verse, state.q)}</p>` : ''}
-            ${excerpt ? `<p class="post__excerpt">${highlight(excerpt, state.q)}</p>` : ''}
-            ${p.photos.length ? `<div class="post__cover">${imgTag(p.photos[0])}${p.photos.length > 1 ? `<span class="post__more">${icon('image')}${p.photos.length}</span>` : ''}</div>` : ''}
+            ${excerpt ? `<p class="post__excerpt">${highlight(excerpt, state.q)}</p>` : ''}`;
+        // 사진이 있으면 사진이 먼저, 쓴 사람은 사진 위에 / 없으면 예전처럼 이름 줄부터
+        return `
+          <a class="post card${photo ? ' post--photo' : ''}${animate && !reduceMotion() ? ' rise' : ''}" style="--i:${Math.min(i, 8)}" href="#/post/${encodeURIComponent(p.id)}">
+            ${photo ? `<div class="post__cover">${imgTag(p.photos[0])}
+                <span class="post__chip">${avatar(p.author, '', 'xs')}<b>${esc(p.author || '작성자')}</b><small>${fullDate(p.date)}${p.dept ? ` · ${esc(p.dept)}` : ''}</small></span>
+                ${isNew(p) ? '<span class="tag tag--new post__badge">새 글</span>' : ''}
+                ${p.photos.length > 1 ? `<span class="post__more">${icon('image')}${p.photos.length}</span>` : ''}
+              </div>
+              <div class="post__body">${text}</div>`
+            : `<div class="post__head">
+                ${avatar(p.author)}
+                <div class="post__who"><b>${esc(p.author || '작성자')}</b><span>${fullDate(p.date)}${p.dept ? ` · <em class="c-${tone(p.dept)}">${esc(p.dept)}</em>` : ''}</span></div>
+                ${isNew(p) ? '<span class="tag tag--new">새 글</span>' : ''}
+              </div>${text}`}
             <div class="post__foot">
               <span>${icon('msg')}댓글 ${p.comments || 0}</span>
               ${p.prayers.length ? `<span>${icon('heart')}기도제목 ${p.prayers.length}</span>` : ''}

@@ -312,3 +312,36 @@ pre.json {
   display: inline-block; vertical-align: 2px; margin-left: 4px; padding: 1px 8px; border-radius: 999px;
   background: var(--accent-soft); color: var(--accent); font-size: 12px; font-weight: 700;
 }
+
+/* ─── 로그인 화면 ─────────────────────────── */
+body.locked .top { display: none; }
+body.locked {
+  background:
+    radial-gradient(1200px 500px at 50% -10%, var(--brand-soft), transparent 70%),
+    var(--bg);
+}
+.login {
+  min-height: calc(100vh - 100px); min-height: calc(100dvh - 100px);
+  display: flex; flex-direction: column; justify-content: center;
+  max-width: 380px; margin: 0 auto; padding: 24px 0;
+}
+.login__brand { text-align: center; margin-bottom: 22px; }
+.login__mark { display: inline-block; width: 52px; height: 52px; border-radius: 16px; margin-bottom: 14px;
+  box-shadow: inset 0 0 0 13px var(--brand), inset 0 0 0 16px color-mix(in srgb, var(--bg) 70%, transparent); }
+.login__brand h1 { margin: 0; font-size: 28px; letter-spacing: -0.04em; font-weight: 600; color: var(--text-2); }
+.login__brand h1 b { color: var(--text); font-weight: 800; }
+.login__brand p { margin: 4px 0 0; color: var(--text-2); }
+.login__card { display: grid; gap: 14px; padding: 22px; }
+.login__btn { width: 100%; min-height: 50px; font-size: 16px; margin-top: 2px; }
+.login__error { margin: -4px 0 0; color: var(--danger); font-size: 14px; font-weight: 600; }
+.login__note { text-align: center; color: var(--text-3); font-size: 13px; margin: 16px 0 0; line-height: 1.6; }
+
+/* ─── 댓글 쓰기 ──────────────────────────── */
+.comment-form { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; margin-top: 12px; }
+.comment-form .textarea { min-height: 48px; }
+.comment-form .btn { min-height: 48px; }
+.comment-del {
+  margin-left: 8px; border: 0; background: none; padding: 0; cursor: pointer;
+  font-size: 12px; color: var(--text-3); text-decoration: underline;
+}
+.comment-del:hover { color: var(--danger); }

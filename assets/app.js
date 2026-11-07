@@ -1,7 +1,7 @@
 /* 청년회 교제록 — 화면 동작
  * 구성: 모아보기(목록·상세·검색·월별) / 기도제목 / 참석 흐름 / 작성(복사해서 붙여넣기) / 설정
  * 청년회교제실(boardId 2122)은 회원 전용이라 깨사모 로그인(hash)이 있어야 실제 글이 옵니다.
- * 로그인 전이거나 연결이 안 되면 예시 데이터로 화면을 보여줍니다.
+ * 로그인 화면을 거쳐야 들어갈 수 있고, 불러오기에 실패하면 알림을 보여줍니다.
  */
 (() => {
   'use strict';
@@ -70,9 +70,10 @@
     const p = { ...params };
     if (!NO_HASH_APIS.includes(api) && !p.hash && auth.hash) p.hash = auth.hash;
     const r = await send(JSON.stringify({ api, params: p }), { 'Content-Type': 'application/json' });
-    if (p.hash && isHashError(r)) {
-      auth.clear();
-      toast('로그인이 만료됐어요. 설정에서 다시 로그인해 주세요');
+    if (p.hash && isHashError(r) && auth.hash) {
+      signOut();
+      toast('로그인이 만료됐어요. 다시 로그인해 주세요');
+      route();
     }
     return r;
   }
@@ -140,7 +141,7 @@
   }
   const SECTION_KEYS = [
     ['참석', 'people'], ['말씀', 'verse'], ['나눔', 'share'], ['기도', 'prayer'],
-    ['번개', 'bungae'], ['작성', 'writer'], ['날짜', 'date'],
+    ['기타', 'etc'], ['번개', 'etc'], ['광고', 'etc'], ['작성', 'writer'], ['날짜', 'date'],
   ];
   // 소제목 줄 읽기: 앱 양식 "■ 참석자 (5명): …" 과 게시판에서 쓰던 "[ 참석 B S ]", "[ 기도부탁 ]" 둘 다
   function parseSections(text) {
@@ -187,7 +188,7 @@
       verse: sec.verse?.[0] || '',
       verseNote: (sec.verse || []).slice(1).join('\n'),
       share: (sec.share || []).join('\n'),
-      bungae: (sec.bungae || []).join('\n'),
+      etc: (sec.etc || []).join('\n'),
       prayers: prayersFrom(sec.prayer || []),
       photos: [...new Set(photos)],
       comments: Number(o.total_comment) || 0,
@@ -218,14 +219,15 @@
     if (state.loading && !force) return state.loading;
     const job = (async () => {
       const { rows, error } = auth.hash ? await fetchPage(1) : { error: '로그인이 필요해요' };
-      if (rows && rows.length) {
+      if (rows) {
         state.source = 'api'; state.error = '';
         state.posts = rows;
         state.page = 1;
         state.hasMore = rows.length >= C.board.pageSize;
       } else {
-        state.source = 'sample'; state.error = error || '';
-        state.posts = window.SAMPLE_POSTS.map(normPost);
+        // 불러오기 실패: 빈 목록 + 알림 (예시 데이터는 쓰지 않음)
+        state.source = 'error'; state.error = error || '알 수 없는 오류';
+        state.posts = [];
         state.hasMore = false;
       }
       sortPosts();
@@ -306,13 +308,9 @@
     return doc.body.innerHTML;
   }
 
-  const sampleNotice = () => {
-    if (state.source !== 'sample') return '';
-    if (!auth.hash) {
-      return `<div class="notice"><span>🔑</span><div><b>로그인하면 실제 교제록이 보여요</b><br>청년회교제실은 회원 전용 게시판이에요. 지금은 예시 데이터를 보여주고 있어요.<div class="btn-row" style="margin-top:8px"><a class="btn btn--primary btn--sm" href="#/settings">깨사모 아이디로 로그인</a></div></div></div>`;
-    }
-    return `<div class="notice"><span>📋</span><div><b>예시 데이터로 보여주는 중</b><br>게시판을 불러오지 못했어요.${state.error ? ` <span class="muted">(${esc(state.error)})</span>` : ''} 설정 → 연결 확인에서 테스트할 수 있어요.</div></div>`;
-  };
+  const sampleNotice = () => (state.source === 'error'
+    ? `<div class="notice is-error"><span>⚠️</span><div><b>교제록을 불러오지 못했어요</b><br>${esc(state.error)}<div class="btn-row" style="margin-top:8px"><button class="btn btn--sm" onclick="location.reload()">다시 시도</button></div></div></div>`
+    : '');
   const skeleton = () => `<div class="loading">${'<div class="skeleton"></div>'.repeat(4)}</div>`;
   const progress = (label) => `<div class="loading-label" id="prog">${esc(label)}</div>${skeleton()}`;
   const setProgress = (done, total) => {
@@ -422,7 +420,7 @@
               <div class="meta">
                 ${p.people.length ? `<span>👥 ${p.people.length}명</span>` : ''}
                 ${p.prayers.length ? `<span>🙏 기도제목 ${p.prayers.length}</span>` : ''}
-                ${p.bungae ? `<span>⚡ 번개 후기</span>` : ''}
+                ${p.etc ? `<span>📌 기타</span>` : ''}
                 ${p.photos.length ? `<span>📷 ${p.photos.length}</span>` : ''}
                 ${p.comments ? `<span>💬 ${p.comments}</span>` : ''}
                 ${p.author ? `<span>✍️ ${esc(p.author)}</span>` : ''}
@@ -454,7 +452,7 @@
           sec('말씀', p.verse ? `<p><b>${esc(p.verse)}</b></p>${para(p.verseNote)}` : ''),
           sec('나눔', para(p.share)),
           sec('기도제목', p.prayers.length ? `<ul class="prayer-list">${p.prayers.map((x) => `<li>${x.name ? `<b>${esc(x.name)}</b>` : ''}${esc(x.text)}</li>`).join('')}</ul>` : ''),
-          sec('번개 후기', para(p.bungae)),
+          sec('기타', para(p.etc)),
         ].join('')
       : (p.people.length ? sec(`참석자 ${p.people.length}명`, `<div class="people">${p.people.map((n) => `<span class="person">${esc(n)}</span>`).join('')}</div>`) : '') +
         `<div class="section raw-html">${sanitize(p.body) || '<p class="muted">본문이 없어요</p>'}</div>`;
@@ -487,12 +485,51 @@
     if (!document.getElementById('comments')) return;
     // 댓글 API는 { status } 없이 배열만 돌려줌
     const list = (Array.isArray(r) ? r : (Array.isArray(r.result) ? r.result : [])).filter((x) => x && x.comment);
+    const myId = String(auth.me?.userid || '').toLowerCase();
     $c.innerHTML = `<h2>댓글 ${list.length}</h2>` + (list.length
       ? `<ul class="comment-list">${list.map((x) => {
           const d = parseDate(x.created);
-          return `<li><div class="comment-head"><b>${esc(x.username || '')}</b>${x.sex ? `<span class="muted"> ${esc(x.sex)}</span>` : ''}${d ? `<time>${d.getMonth() + 1}.${d.getDate()}</time>` : ''}</div><p>${esc(htmlToText(x.comment))}</p></li>`;
+          const mine = myId && String(x.userid || '').toLowerCase() === myId;
+          return `<li><div class="comment-head"><b>${esc(x.username || '')}</b>${x.sex ? `<span class="muted"> ${esc(x.sex)}</span>` : ''}${d ? `<time>${d.getMonth() + 1}.${d.getDate()}</time>` : ''}${mine ? `<button class="comment-del" data-del="${esc(x.uid)}" aria-label="내 댓글 지우기">지우기</button>` : ''}</div><p>${esc(htmlToText(x.comment))}</p></li>`;
         }).join('')}</ul>`
-      : `<p class="muted small">아직 댓글이 없어요</p>`);
+      : `<p class="muted small">아직 댓글이 없어요. 첫 댓글을 남겨 주세요</p>`) + `
+      <form class="comment-form" id="commentForm">
+        <textarea class="textarea" name="comment" rows="2" maxlength="1000" placeholder="댓글을 남겨 주세요" required></textarea>
+        <button class="btn btn--primary" type="submit">등록</button>
+      </form>`;
+
+    const $form = document.getElementById('commentForm');
+    const $ta = $form.comment;
+    $form.onsubmit = async (e) => {
+      e.preventDefault();
+      const text = $ta.value.trim();
+      if (text.length < 2) { toast('댓글은 2자 이상 써 주세요'); return; }
+      const $btn = $form.querySelector('button');
+      $btn.disabled = true; $btn.textContent = '등록 중…';
+      const res = await callApi('comment', {
+        mode: 'add_comment', board_uid: p.id, comment: text,
+        url: `${location.origin}/#/post/${p.id}`,
+      });
+      if (res.status !== 'ok') {
+        $btn.disabled = false; $btn.textContent = '등록';
+        toast(`댓글을 달지 못했어요: ${typeof res.result === 'string' ? res.result : '알 수 없는 오류'}`);
+        return;
+      }
+      p.comments = (p.comments || 0) + 1;
+      toast('댓글을 달았어요');
+      drawComments(p);
+    };
+    $c.querySelectorAll('[data-del]').forEach((b) => {
+      b.onclick = async () => {
+        if (!confirm('이 댓글을 지울까요?')) return;
+        b.disabled = true;
+        const res = await callApi('comment', { mode: 'del_comment', board_uid: p.id, comment_uid: b.dataset.del });
+        if (res.status !== 'ok') { b.disabled = false; toast(`지우지 못했어요: ${typeof res.result === 'string' ? res.result : '알 수 없는 오류'}`); return; }
+        p.comments = Math.max(0, (p.comments || 1) - 1);
+        toast('댓글을 지웠어요');
+        drawComments(p);
+      };
+    });
   }
 
   /* ─── 화면: 기도제목 모아보기 ────────────── */
@@ -640,7 +677,7 @@
     if (location.hash.replace(/^#\/?/, '') !== 'write') return;
     const depts = Object.keys(rosters).filter((k) => rosters[k].length);
     const today = new Date();
-    const draft = store.get('draft', null) || { date: ymd(today), writer: auth.me?.name || "", people: [], extra: '', verse: '', verseNote: '', share: '', prayers: {}, bungae: '' };
+    const draft = store.get('draft', null) || { date: ymd(today), writer: auth.me?.name || "", people: [], extra: '', verse: '', verseNote: '', share: '', prayers: {}, etc: '' };
     let dept = depts.includes(draft.dept) ? draft.dept : (depts.includes(store.get('lastDept', '')) ? store.get('lastDept', '') : (depts[0] || ''));
     const rosterOf = (d) => (d && rosters[d]) || getRoster();
     const roster = rosterOf(dept);
@@ -649,7 +686,7 @@
 
     $app.innerHTML = `
       <div class="page-head"><h1>교제록 작성</h1><p>양식대로 쓰고, 게시판에 바로 올리거나 복사해서 붙여넣어요</p></div>
-      ${depts.length || roster.length ? '' : `<div class="notice"><span>👥</span><div><b>부서 명단이 아직 없어요</b><br>${auth.hash ? '부서별 명단이 등록되면 여기서 참석자를 고를 수 있어요. 그 전에는 아래 칸에 이름을 직접 적어 주세요.' : '<a href="#/settings">로그인</a>하면 부서 명단에서 참석자를 고를 수 있어요.'}</div></div>`}
+      ${depts.length || roster.length ? '' : `<div class="notice"><span>👥</span><div><b>부서 명단이 아직 없어요</b><br>부서별 명단이 등록되면 여기서 참석자를 고를 수 있어요. 그 전에는 아래 칸에 이름을 직접 적어 주세요.</div></div>`}
       <form class="card form-card" id="f" autocomplete="off">
         ${depts.length ? `<div class="field"><span>부서</span><div class="chips" id="deptPick" style="margin:0">${depts.map((d) => `<button type="button" class="chip" data-d="${esc(d)}" aria-pressed="${d === dept}">${esc(d)}</button>`).join('')}</div></div>` : ''}
         <div class="grid-2">
@@ -665,7 +702,7 @@
         <label class="field"><span>말씀 요약</span><textarea class="textarea" name="verseNote" placeholder="말씀에서 받은 은혜를 간단히">${esc(draft.verseNote)}</textarea></label>
         <label class="field"><span>나눔</span><textarea class="textarea" name="share" rows="5" placeholder="함께 나눈 이야기">${esc(draft.share)}</textarea></label>
         <div class="field"><span>기도제목</span><div class="prayer-inputs" id="prayers"></div></div>
-        <label class="field"><span>번개 후기 <span class="muted small">(선택)</span></span><textarea class="textarea" name="bungae" placeholder="이번 주 번개 모임이 있었다면">${esc(draft.bungae)}</textarea></label>
+        <label class="field"><span>기타 <span class="muted small">(선택)</span></span><textarea class="textarea" name="etc" placeholder="광고, 모임 소식, 덧붙일 이야기">${esc(draft.etc ?? draft.bungae ?? '')}</textarea></label>
         <div class="field"><span>사진 <span class="muted small">(자동으로 줄여서 저장해요)</span></span>
           <input type="file" id="photoInput" accept="image/*" multiple hidden>
           <div class="btn-row"><button type="button" class="btn" id="addPhoto">＋ 사진 고르기</button><button type="button" class="btn" id="savePhotos" ${photos.length ? '' : 'hidden'}>줄인 사진 저장</button></div>
@@ -684,7 +721,6 @@
           <li><b>본문 복사</b> → 내용 칸에 붙여넣기</li>
           <li>줄인 사진을 게시판의 사진 첨부로 올리기</li>
         </ol>
-        ${C.board.writeEnabled && !auth.hash ? `<p class="small muted" style="margin:8px 0 0"><a href="#/settings">로그인</a>하면 앱에서 바로 올릴 수 있어요.</p>` : ''}
       </div>
 
       <div class="sticky-actions"><div class="btn-row">
@@ -709,7 +745,7 @@
         date: String(fd.get('date') || ''), writer: String(fd.get('writer') || '').trim(),
         people, extra, all: [...people, ...extras.filter((n) => !people.includes(n))],
         verse: String(fd.get('verse') || '').trim(), verseNote: String(fd.get('verseNote') || '').trim(),
-        share: String(fd.get('share') || '').trim(), bungae: String(fd.get('bungae') || '').trim(),
+        share: String(fd.get('share') || '').trim(), etc: String(fd.get('etc') || '').trim(),
         prayers: prayerDraft,
       };
     }
@@ -737,7 +773,7 @@
       if (d.share) out.push(['나눔', '', d.share]);
       const pr = d.all.filter((n) => (d.prayers[n] || '').trim()).map((n) => `- ${n}: ${d.prayers[n].trim()}`);
       if (pr.length) out.push(['기도제목', '', pr.join('\n')]);
-      if (d.bungae) out.push(['번개 후기', '', d.bungae]);
+      if (d.etc) out.push(['기타', '', d.etc]);
       return out;
     }
     const toText = (d) => lines(d).map(([k, v, more]) => `■ ${k}${v ? ': ' + v : ''}${more ? '\n' + more : ''}`).join('\n\n');
@@ -891,18 +927,9 @@
       <div class="page-head"><h1>설정</h1><p>명단은 이 기기에만 저장돼요</p></div>
       <div class="stack">
         <section class="card stack" id="loginCard">
-          <h2 class="month" style="margin:0">깨사모 로그인</h2>
-          ${auth.hash ? `
-            <div class="login-on"><span class="avatar" aria-hidden="true">${esc((me?.name || '나').slice(0, 1))}</span><div><b>${esc(me?.name || '로그인됨')}</b>${me?.sex ? ` ${esc(me.sex)}` : ''}${me?.admin ? ' <span class="badge">관리자</span>' : ''}<br><span class="small muted">${esc([me?.church, me?.userid].filter(Boolean).join(' · '))}</span></div></div>
-            <p class="small muted" style="margin:0">청년회교제실 글을 읽고, 앱에서 바로 글을 올릴 수 있어요.</p>
-            <div class="btn-row"><button class="btn" id="logout">로그아웃</button></div>`
-          : `
-            <p class="small muted" style="margin:0">청년회교제실은 회원 전용 게시판이라 로그인해야 글이 보여요. 비밀번호는 저장하지 않고, 로그인 확인값(hash)만 이 기기에 남아요.</p>
-            <form class="stack" id="loginForm" autocomplete="on">
-              <label class="field"><span>아이디</span><input class="input" name="userid" autocomplete="username" autocapitalize="off" spellcheck="false" required></label>
-              <label class="field"><span>비밀번호</span><input class="input" name="password" type="password" autocomplete="current-password" required></label>
-              <div class="btn-row"><button class="btn btn--primary" type="submit" id="loginBtn">로그인</button></div>
-            </form>`}
+          <h2 class="month" style="margin:0">내 계정</h2>
+          <div class="login-on"><span class="avatar" aria-hidden="true">${esc((me?.name || '나').slice(0, 1))}</span><div><b>${esc(me?.name || '로그인됨')}</b>${me?.sex ? ` ${esc(me.sex)}` : ''}${me?.admin ? ' <span class="badge">관리자</span>' : ''}<br><span class="small muted">${esc([me?.church, me?.userid].filter(Boolean).join(' · '))}</span></div></div>
+          <div class="btn-row"><button class="btn" id="logout">로그아웃</button></div>
         </section>
         <section class="card stack">
           <h2 class="month" style="margin:0">이 기기 명단</h2>
@@ -942,32 +969,12 @@
       document.getElementById('params').value = sampleJson(e.target.value);
     };
 
-    // 로그인 / 로그아웃
-    const $lf = document.getElementById('loginForm');
-    if ($lf) $lf.onsubmit = async (e) => {
-      e.preventDefault();
-      const fd = new FormData($lf);
-      const $btn = document.getElementById('loginBtn');
-      $btn.disabled = true; $btn.textContent = '로그인 중…';
-      const r = await callApi('login', { Userid: String(fd.get('userid') || '').trim(), password: String(fd.get('password') || '') });
-      if (r.status !== 'ok' || !r.hash) {
-        $btn.disabled = false; $btn.textContent = '로그인';
-        toast(String(r.result || '로그인하지 못했어요'));
-        return;
-      }
-      const m = await callApi('me', { hash: r.hash });
-      auth.set(r.hash, m.status === 'ok' ? m.result : null);
-      state.posts = null; state.loading = null; state.rosters = null; // 실제 게시판으로 다시 불러오기
-      toast(`${m.result?.name || ''} 로그인했어요`.trim());
-      viewSettings();
-    };
-    const $lo = document.getElementById('logout');
-    if ($lo) $lo.onclick = () => {
+    document.getElementById('logout').onclick = () => {
       if (!confirm('로그아웃할까요?')) return;
-      auth.clear();
-      state.posts = null; state.loading = null; state.rosters = null;
+      signOut();
       toast('로그아웃했어요');
-      viewSettings();
+      location.hash = '#/';
+      route();
     };
     document.getElementById('run').onclick = async () => {
       const $out = document.getElementById('out');
@@ -980,7 +987,7 @@
     };
     document.getElementById('reload').onclick = async () => {
       await loadPosts(true);
-      toast(state.source === 'api' ? `교제록 ${state.posts.length}개를 불러왔어요` : `연결 실패: ${state.error || '예시 데이터 사용 중'}`);
+      toast(state.source === 'api' ? `교제록 ${state.posts.length}개를 불러왔어요` : `연결 실패: ${state.error}`);
     };
   }
 
@@ -994,8 +1001,58 @@
     $app.innerHTML = `<div class="page-head"><h1>참석 흐름</h1></div><div class="empty">🔒 관리자만 볼 수 있는 화면이에요</div>`;
   }
 
+  /* ─── 로그인 화면 (로그인해야 교제록에 들어갈 수 있음) ─── */
+  function signOut() {
+    auth.clear();
+    state.posts = null; state.loading = null; state.rosters = null;
+  }
+  function viewLogin() {
+    $app.innerHTML = `
+      <div class="login">
+        <div class="login__brand">
+          <span class="brand__mark login__mark" aria-hidden="true"></span>
+          <h1><b>${esc(C.groupName)}</b> 교제록</h1>
+          <p>깨사모 아이디로 로그인해 주세요</p>
+        </div>
+        <form class="card login__card" id="loginForm" autocomplete="on">
+          <label class="field"><span>아이디</span><input class="input" name="userid" value="${esc(store.get('lastUserid', ''))}" autocomplete="username" autocapitalize="off" spellcheck="false" required></label>
+          <label class="field"><span>비밀번호</span><input class="input" name="password" type="password" autocomplete="current-password" required></label>
+          <p class="login__error" id="loginError" role="alert" hidden></p>
+          <button class="btn btn--primary login__btn" type="submit" id="loginBtn">로그인</button>
+        </form>
+        <p class="login__note">청년회교제실은 회원 전용이에요. 비밀번호는 저장하지 않고,<br>로그인 확인값만 이 기기에 남아요.</p>
+      </div>`;
+    const $f = document.getElementById('loginForm');
+    const $btn = document.getElementById('loginBtn');
+    const $err = document.getElementById('loginError');
+    $f[store.get('lastUserid', '') ? 'password' : 'userid'].focus();
+    $f.onsubmit = async (e) => {
+      e.preventDefault();
+      const userid = String($f.userid.value || '').trim();
+      $btn.disabled = true; $btn.textContent = '로그인 중…'; $err.hidden = true;
+      const r = await callApi('login', { Userid: userid, password: String($f.password.value || '') });
+      if (r.status !== 'ok' || !r.hash) {
+        $btn.disabled = false; $btn.textContent = '로그인';
+        $err.textContent = String(r.result || '로그인하지 못했어요');
+        $err.hidden = false;
+        $f.password.value = '';
+        $f.password.focus();
+        return;
+      }
+      const m = await callApi('me', { hash: r.hash });
+      signOut();
+      auth.set(r.hash, m.status === 'ok' ? m.result : null);
+      store.set('lastUserid', userid);
+      toast(`${m.result?.name || ''} 반가워요 👋`.trim());
+      route();
+    };
+  }
+
   /* ─── 라우터 ─────────────────────────────── */
   function route() {
+    const locked = !auth.hash;
+    document.body.classList.toggle('locked', locked);
+    if (locked) { window.scrollTo(0, 0); return viewLogin(); }
     const h = location.hash.replace(/^#\/?/, '');
     const [name, ...rest] = h.split('/');
     const tab = name === 'post' || !name ? 'list' : name;

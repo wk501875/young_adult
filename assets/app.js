@@ -195,7 +195,7 @@
   /* ─── 게시글 불러오기 ────────────────────── */
   const state = {
     posts: null, source: '', error: '', loading: null, page: 0, hasMore: false,
-    q: '', month: '', dept: '', prayerMode: 'person',
+    q: '', month: '', dept: '', day: '', prayerMode: 'person',
   };
   const sortPosts = () => state.posts.sort((a, b) => (b.date?.getTime() || 0) - (a.date?.getTime() || 0));
 
@@ -532,31 +532,96 @@
     return $i;
   }
 
-  /* ─── 화면: 교제록 (모아보기) ─── */
+  /* ─── 화면: 홈 (교제록) ─── */
+  let listRedraw = null; // 위쪽 검색창·달력에서 목록을 다시 그릴 때
+  const draftInfo = () => {
+    const d = store.get('draft', null);
+    if (!d) return null;
+    const steps = [(d.people || []).length || (d.extra || '').trim(), d.verse || d.verseNote, d.share, Object.values(d.prayers || {}).some((v) => String(v).trim())];
+    const done = steps.filter(Boolean).length;
+    return done ? { done, total: 4 } : null;
+  };
+  function filterLabel() {
+    const parts = [];
+    if (state.dept) parts.push(state.dept);
+    if (state.day) { const d = parseDate(state.day); parts.push(d ? `${d.getMonth() + 1}월 ${d.getDate()}일` : state.day); }
+    return parts.join(' · ');
+  }
+
   async function viewList({ restore = false } = {}) {
-    const draft = store.get('draft', null);
-    const hasDraft = draft && (draft.share || draft.verse || (draft.people || []).length);
+    const me = auth.me;
+    const draft = draftInfo();
     $app.innerHTML = `
-      ${pageHead('교제록', '주마다 나눈 말씀과 교제를 모아 봐요')}
-      <a class="composer card" href="#/write">
-        ${avatar(auth.me?.name)}
-        <span class="composer__ph">${hasDraft ? '쓰다 만 교제록이 있어요' : '이번 주 교제록을 남겨 주세요'}</span>
-        <span class="btn btn--primary btn--sm">${hasDraft ? '이어 쓰기' : '쓰기'}</span>
-      </a>
-      <div class="toolbar">
-        ${searchBox('q', '이름, 말씀, 나눔으로 찾기', state.q)}
+      <div class="stories" id="stories" aria-label="부서">${'<div class="story story--sk"><span class="sk"></span></div>'.repeat(4)}</div>
+      <section class="card welcome">
+        <h1 class="welcome__title">${esc(me?.name ? `${me.name}님, 반가워요` : '반가워요')}</h1>
+        <p class="welcome__sub" id="welcomeSub">이번 주 교제록을 불러오는 중이에요</p>
+        <a class="composer" href="#/write">
+          ${avatar(me?.name)}
+          <span class="composer__ph">${draft ? '쓰다 만 교제록을 이어서 써 보세요' : '이번 주 교제는 어땠나요?'}</span>
+        </a>
+        <div class="composer__bar">
+          <div class="composer__tools">
+            <a href="#/write" data-tip="사진" aria-label="사진 넣기">${icon('image')}</a>
+            <a href="#/write" data-tip="말씀" aria-label="말씀 적기">${icon('quote')}</a>
+            <a href="#/write" data-tip="참석자" aria-label="참석자 고르기">${icon('users')}</a>
+            <a href="#/write" data-tip="기도제목" aria-label="기도제목 적기">${icon('heart')}</a>
+          </div>
+          <div class="composer__actions">
+            ${draft ? `<a class="btn btn--sm" href="#/write">${icon('pen')}이어 쓰기</a>` : ''}
+            <a class="btn btn--primary btn--sm" href="#/write">${icon('send')}교제록 쓰기</a>
+          </div>
+        </div>
+      </section>
+      <div class="feed-head">
+        <h2 id="feedTitle">최근 교제록</h2>
+        <button type="button" class="link-btn" id="clearFilter" hidden>전체 보기</button>
         <select class="select select--sm" id="month" aria-label="기간"></select>
       </div>
-      <div id="deptWrap"></div>
-      <div id="list">${skeletonCards()}</div>
+      <div class="m-only">${searchBox('q', '이름, 말씀, 나눔으로 찾기', state.q)}</div>
+      <div id="list">${skeletonCards(3)}</div>
       <div class="more" id="more"></div>`;
     const posts = await loadPosts();
     if (!document.getElementById('list')) return;
-    if (state.source === 'error') { document.getElementById('list').innerHTML = errorState(); return; }
+    if (state.source === 'error') {
+      document.getElementById('stories').innerHTML = '';
+      document.getElementById('welcomeSub').textContent = '교제록을 불러오지 못했어요';
+      document.getElementById('list').innerHTML = errorState();
+      return;
+    }
 
-    const dc = deptChips(posts, () => drawList());
-    document.getElementById('deptWrap').innerHTML = dc.html;
-    dc.bind();
+    // 이번 주 소식 한 줄
+    const weekAgo = Date.now() - 7 * 86400e3;
+    const thisWeek = posts.filter((p) => p.createdAt > weekAgo).length;
+    const fresh = posts.filter(isNew).length;
+    document.getElementById('welcomeSub').innerHTML = thisWeek
+      ? `이번 주에 교제록 <b>${thisWeek}개</b>가 올라왔어요${fresh ? ` · 새 글 <b>${fresh}개</b>` : ''}`
+      : '이번 주엔 아직 교제록이 없어요. 첫 교제록을 남겨 볼까요?';
+
+    // 부서 카드 줄 (각 부서 최근 사진)
+    const depts = [...new Set(posts.map((p) => p.dept))];
+    const drawStories = () => {
+      document.getElementById('stories').innerHTML = `
+        <a class="story story--add" href="#/write"><span class="story__plus">${icon('plus')}</span><b>교제록 쓰기</b></a>
+        ${depts.map((d) => {
+          const mine = posts.filter((p) => p.dept === d);
+          const cover = mine.find((p) => p.photos.length)?.photos[0];
+          const n = mine.filter(isNew).length;
+          return `<button type="button" class="story t-${tone(d)}" data-d="${esc(d)}" aria-pressed="${state.dept === d}">
+            ${cover ? imgTag(cover) : '<span class="story__pattern"></span>'}
+            <span class="story__shade"></span>
+            ${n ? `<span class="story__badge">새 글 ${n}</span>` : ''}
+            <span class="story__name"><b>${esc(d)}</b><small>교제록 ${mine.length}개</small></span>
+          </button>`;
+        }).join('')}`;
+    };
+    drawStories();
+    document.getElementById('stories').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-d]');
+      if (!b) return;
+      state.dept = state.dept === b.dataset.d ? '' : b.dataset.d;
+      drawStories(); drawList(); renderSideDepts();
+    });
 
     const $month = document.getElementById('month');
     const drawMonths = () => {
@@ -566,7 +631,11 @@
     };
     drawMonths();
     $month.onchange = () => { state.month = $month.value; drawList(); };
-    bindSearch('q', (v) => { state.q = v; drawList(); });
+    bindSearch('q', (v) => { state.q = v; syncSearchBoxes(); drawList(); });
+    document.getElementById('clearFilter').onclick = () => {
+      state.dept = ''; state.day = ''; state.month = ''; $month.value = '';
+      drawStories(); drawList(); renderSideDepts(); renderPanel();
+    };
 
     const $more = document.getElementById('more');
     const drawMore = () => {
@@ -577,17 +646,21 @@
         const n = await loadMore();
         if (!document.getElementById('list')) return;
         if (n) toast(`${n}개를 더 불러왔어요`);
-        drawMonths(); drawList(false); drawMore();
+        drawMonths(); drawList(false); drawMore(); renderPanel();
       };
     };
     drawMore();
-    // 최근 글 본문을 뒤에서 받아와서 참석자·기도제목·검색에 반영
     fillBodies().then(() => { if (document.getElementById('list')) drawList(false); });
 
     function drawList(animate = true) {
       const q = state.q.toLowerCase();
-      const byFilter = posts.filter((p) => inDept(p) && (!state.month || (p.date && monthKey(p.date) === state.month)));
+      const byFilter = posts.filter((p) => inDept(p) &&
+        (!state.month || (p.date && monthKey(p.date) === state.month)) &&
+        (!state.day || (p.date && ymd(p.date) === state.day)));
       const rows = byFilter.filter((p) => !q || (p.title + '\n' + p.text + '\n' + p.author).toLowerCase().includes(q));
+      const label = filterLabel();
+      document.getElementById('feedTitle').textContent = q ? `'${state.q}' 찾은 교제록` : label ? `${label} 교제록` : '최근 교제록';
+      document.getElementById('clearFilter').hidden = !(state.dept || state.day || state.month);
       const $list = document.getElementById('list');
       if (!rows.length) {
         $list.innerHTML = q
@@ -595,44 +668,45 @@
           : posts.length
             ? emptyState({ ic: 'calendar', title: '이 조건에 맞는 교제록이 없어요', action: `<button class="btn btn--sm" type="button" id="resetF">필터 초기화</button>` })
             : emptyState({ ic: 'book', title: '아직 교제록이 없어요', desc: '첫 교제록을 남겨 주세요', action: `<a class="btn btn--primary btn--sm" href="#/write">${icon('pen')}교제록 쓰기</a>` });
-        document.getElementById('clearQ')?.addEventListener('click', () => { state.q = ''; const i = document.getElementById('q'); i.value = ''; i.dispatchEvent(new Event('input')); });
-        document.getElementById('resetF')?.addEventListener('click', () => { state.dept = ''; state.month = ''; viewList(); });
+        document.getElementById('clearQ')?.addEventListener('click', () => { state.q = ''; syncSearchBoxes(); drawList(); });
+        document.getElementById('resetF')?.addEventListener('click', () => document.getElementById('clearFilter').click());
         return;
       }
-      let html = '';
-      let lastMonth = null;
-      rows.forEach((p, i) => {
-        const mk = p.date ? monthKey(p.date) : '';
-        if (mk !== lastMonth) {
-          if (lastMonth !== null) html += '</div>';
-          html += `<h2 class="group-title">${mk ? monthLabel(mk) : '날짜 없음'}</h2><div class="feed">`;
-          lastMonth = mk;
-        }
+      $list.innerHTML = `<div class="feed">${rows.map((p, i) => {
         const excerpt = q && !p.share.toLowerCase().includes(q) ? findSnippet(p.text, q) : summaryOf(p);
-        html += `
+        return `
           <a class="post card${animate && !reduceMotion() ? ' rise' : ''}" style="--i:${Math.min(i, 8)}" href="#/post/${encodeURIComponent(p.id)}">
             <div class="post__head">
               ${avatar(p.author)}
-              <div class="post__who"><b>${esc(p.author || '작성자')}</b><span>${fullDate(p.date)}</span></div>
-              <div class="post__tags">${isNew(p) ? '<span class="tag tag--new">새 글</span>' : ''}${tag(p.dept)}</div>
+              <div class="post__who"><b>${esc(p.author || '작성자')}</b><span>${fullDate(p.date)}${p.dept ? ` · <em class="c-${tone(p.dept)}">${esc(p.dept)}</em>` : ''}</span></div>
+              ${isNew(p) ? '<span class="tag tag--new">새 글</span>' : ''}
             </div>
             <h3 class="post__title">${highlight(p.title, state.q)}</h3>
             ${p.verse ? `<p class="post__verse">${icon('quote')}${highlight(p.verse, state.q)}</p>` : ''}
             ${excerpt ? `<p class="post__excerpt">${highlight(excerpt, state.q)}</p>` : ''}
-            ${p.photos.length ? `<div class="post__cover">${imgTag(p.photos[0])}${p.photos.length > 1 ? `<span class="post__more">+${p.photos.length - 1}</span>` : ''}</div>` : ''}
-            <div class="post__meta">
-              ${p.people.length ? `<span>${icon('users')}${p.people.length}명</span>` : ''}
+            ${p.photos.length ? `<div class="post__cover">${imgTag(p.photos[0])}${p.photos.length > 1 ? `<span class="post__more">${icon('image')}${p.photos.length}</span>` : ''}</div>` : ''}
+            <div class="post__foot">
+              <span>${icon('msg')}댓글 ${p.comments || 0}</span>
               ${p.prayers.length ? `<span>${icon('heart')}기도제목 ${p.prayers.length}</span>` : ''}
-              ${p.comments ? `<span>${icon('msg')}${p.comments}</span>` : ''}
+              ${p.people.length ? `<span>${icon('users')}${p.people.length}명</span>` : ''}
               ${!p.hasBody ? '<span class="post__loading">본문 읽는 중</span>' : ''}
+              <span class="post__go">자세히${icon('right')}</span>
             </div>
           </a>`;
-      });
-      $list.innerHTML = html + '</div>';
+      }).join('')}</div>`;
     }
+    listRedraw = () => { if (document.getElementById('list')) drawList(false); };
     drawList(!restore);
     if (restore && state.listScroll) window.scrollTo(0, state.listScroll);
+    maybeCoach();
   }
+  function syncSearchBoxes() {
+    ['q', 'gq'].forEach((id) => {
+      const i = document.getElementById(id);
+      if (i && i.value !== state.q) { i.value = state.q; const c = i.parentElement.querySelector('.search__clear'); if (c) c.hidden = !state.q; }
+    });
+  }
+
   // 목록에 보여줄 두 줄: 나눔 → 말씀 요약 → 소제목·이름 목록·날짜 줄을 뺀 본문
   function summaryOf(p) {
     if (p.share) return p.share;
@@ -861,7 +935,7 @@
     $b.innerHTML = `
       <div class="stats">
         <div class="stat card"><small>지난 모임</small><b>${posts[0].people.length}<em>명</em></b>${posts[1] ? `<span class="${diff >= 0 ? 'up' : 'down'}">${diff >= 0 ? '+' : ''}${diff} 지난번보다</span>` : ''}</div>
-        <div class="stat card"><small>평균 · 최근 ${weeks.length}번</small><b>${avg.toFixed(1)}<em>명</em></b></div>
+        <div class="stat card"><small>평균 · 최근 ${weeks.length}번 <button type="button" class="tip" data-tip="최근 ${weeks.length}번 모임의 참석 인원을 더해서 나눈 값이에요" aria-label="평균 설명">${icon('alert')}</button></small><b>${avg.toFixed(1)}<em>명</em></b></div>
         <div class="stat card"><small>함께한 사람</small><b>${names.length}<em>명</em></b></div>
       </div>
       <section class="card block">
@@ -886,7 +960,6 @@
   }
 
   /* ─── 명단 ─── */
-  const getRoster = () => store.get('roster', []);
   // 부서별 명단 (Cloudflare 환경 변수 ROSTERS → 로그인한 회원만 받음, 기기에 저장 안 함)
   async function loadRosters() {
     if (!auth.hash) return {};
@@ -939,7 +1012,7 @@
     const today = new Date();
     const draft = store.get('draft', null) || { date: ymd(today), writer: auth.me?.name || '', people: [], extra: '', verse: '', verseNote: '', share: '', prayers: {}, etc: '' };
     let dept = depts.includes(draft.dept) ? draft.dept : (depts.includes(store.get('lastDept', '')) ? store.get('lastDept', '') : (depts[0] || ''));
-    const rosterOf = (d) => (d && rosters[d]) || getRoster();
+    const rosterOf = (d) => (d && rosters[d]) || [];
     const roster = rosterOf(dept);
     const canPost = C.board.writeEnabled && !!auth.hash;
     const checkBoxes = (list, checked) => list.map((n) => `<label class="check"><input type="checkbox" name="people" value="${esc(n)}"${checked.includes(n) ? ' checked' : ''}><span>${icon('check')}${esc(n)}</span></label>`).join('');
@@ -947,10 +1020,7 @@
 
     $app.innerHTML = `
       ${pageHead('교제록 쓰기', '쓰는 내용은 이 기기에 자동으로 저장돼요', '<span class="saved" id="saved" aria-live="polite"></span>')}
-      <div class="steps-bar card" id="steps" aria-label="작성 진행">
-        <div class="steps-bar__track">${STEPS.map(([k]) => `<i data-s="${k}"></i>`).join('')}</div>
-        <div class="steps-bar__labels">${STEPS.map(([k, l]) => `<span data-s="${k}">${icon('check')}${l}</span>`).join('')}</div>
-      </div>
+      <ol class="stepper card" id="steps" aria-label="작성 진행">${STEPS.map(([k, l], i) => `<li data-s="${k}"><span class="stepper__dot"><b>${i + 1}</b>${icon('check')}</span><span class="stepper__label">${l}</span></li>`).join('')}</ol>
       <p class="inline-error" id="formError" role="alert" hidden></p>
       <form class="write" id="f" autocomplete="off">
         <section class="card wsec">
@@ -1224,7 +1294,6 @@
 
   /* ─── 화면: 내 정보 ─── */
   async function viewSettings() {
-    const roster = getRoster();
     const B = C.board;
     const SAMPLES = {
       board_post: { ...B.listParams, [B.pageParam]: 1, [B.limitParam]: 5 },
@@ -1251,14 +1320,7 @@
         <a href="${esc(C.board.siteUrl)}" target="_blank" rel="noopener">${icon('external')}<span>교회 사이트 청년회교제실</span>${icon('right', 'ic--end')}</a>
         <button type="button" id="logout">${icon('logout')}<span>로그아웃</span>${icon('right', 'ic--end')}</button>
       </div>
-      <details class="card fold">
-        <summary><span><b>이 기기 명단</b><small>부서 명단이 없을 때 쓰기 화면에서 써요</small></span>${icon('right', 'fold__ic')}</summary>
-        <div class="fold__body">
-          <textarea class="textarea" id="roster" rows="7" placeholder="한 줄에 한 명씩&#10;김가람&#10;이나래">${esc(roster.join('\n'))}</textarea>
-          <div class="btn-row"><button class="btn btn--primary btn--sm" type="button" id="saveRoster">저장</button><button class="btn btn--sm" type="button" id="fromPosts">교제록에서 이름 가져오기</button></div>
-        </div>
-      </details>
-      <details class="card fold">
+      ${isAdmin() ? `<details class="card fold">
         <summary><span><b>API 연결 확인</b><small>관리용 · 생명선앱스 API를 직접 불러봐요</small></span>${icon('right', 'fold__ic')}</summary>
         <div class="fold__body">
           <select class="select" id="api" aria-label="API">
@@ -1271,7 +1333,7 @@
           <div class="btn-row"><button class="btn btn--primary btn--sm" type="button" id="run">호출하기</button><button class="btn btn--sm" type="button" id="reload">교제록 다시 불러오기</button></div>
           <pre class="json" id="out" hidden></pre>
         </div>
-      </details>`;
+      </details>` : ''}`;
 
     document.getElementById('themePick').onclick = (e) => {
       const b = e.target.closest('[data-t]');
@@ -1280,18 +1342,6 @@
       applyTheme();
       document.querySelectorAll('#themePick [data-t]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
     };
-    const lines = (id) => document.getElementById(id).value.split('\n').map((s) => s.trim()).filter(Boolean);
-    document.getElementById('saveRoster').onclick = () => { store.set('roster', [...new Set(lines('roster'))]); toast('명단을 저장했어요'); };
-    document.getElementById('fromPosts').onclick = async (e) => {
-      e.target.disabled = true;
-      const posts = await loadPosts();
-      await fillBodies();
-      e.target.disabled = false;
-      const names = [...new Set([...lines('roster'), ...posts.flatMap((p) => p.people)])];
-      document.getElementById('roster').value = names.join('\n');
-      toast(`${names.length}명을 채웠어요. 확인하고 저장을 눌러 주세요`);
-    };
-    document.getElementById('api').onchange = (e) => { document.getElementById('params').value = sampleJson(e.target.value); };
     document.getElementById('logout').onclick = async () => {
       if (!(await confirmSheet('로그아웃할까요?', '다음에 다시 깨사모 아이디로 로그인하면 돼요.', '로그아웃'))) return;
       signOut();
@@ -1299,6 +1349,9 @@
       route();
       toast('로그아웃했어요');
     };
+    if (!isAdmin()) return;
+    // 관리자만: API 연결 확인
+    document.getElementById('api').onchange = (e) => { document.getElementById('params').value = sampleJson(e.target.value); };
     document.getElementById('run').onclick = async () => {
       const $out = document.getElementById('out');
       let params;
@@ -1320,60 +1373,171 @@
     $app.innerHTML = pageHead('참석 흐름') + emptyState({ ic: 'lock', title: '관리자만 볼 수 있어요', desc: '청년회 관리자에게 권한을 받으면 볼 수 있어요' });
   }
 
-  /* ─── 메뉴 (컴퓨터: 왼쪽, 휴대폰: 아래) ─── */
+  /* ─── 틀: 위쪽 바 · 왼쪽 메뉴 · 아래 탭 ─── */
   const NAV = () => [
-    ['list', '#/', '교제록', 'book'],
+    ['list', '#/', '홈', 'book'],
     ['prayers', '#/prayers', '기도제목', 'heart'],
     ['write', '#/write', '쓰기', 'pen'],
     ...(isAdmin() ? [['attendance', '#/attendance', '참석 흐름', 'chart']] : []),
     ['settings', '#/settings', '내 정보', 'user'],
   ];
-  const brandMark = '<span class="mark" aria-hidden="true"><i></i></span>';
+  const brandMark = '<span class="mark" aria-hidden="true"></span>';
+  const newCount = () => (state.posts || []).filter(isNew).length;
   function renderChrome(tab) {
     const items = NAV();
     const me = auth.me;
-    document.title = tab === 'list' ? APP : `${({ prayers: '기도제목', write: '교제록 쓰기', attendance: '참석 흐름', settings: '내 정보', post: '교제록' })[tab] || '교제록'} · ${APP}`;
-    document.getElementById('side').innerHTML = `
+    const n = newCount();
+    const badge = (k) => (k === 'list' && n ? `<span class="badge" aria-label="새 글 ${n}개">${n > 99 ? '99+' : n}</span>` : '');
+    document.title = tab === 'list' ? APP : `${({ prayers: '기도제목', write: '교제록 쓰기', attendance: '참석 흐름', settings: '내 정보' })[tab] || '교제록'} · ${APP}`;
+    const $top = document.getElementById('topbar');
+    if (!document.getElementById('gq')) $top.innerHTML = `
       <a class="brand" href="#/">${brandMark}<span>${esc(APP)}</span></a>
-      <nav class="nav" aria-label="메뉴">${items.map(([k, href, label, ic]) => `<a href="${href}"${k === tab ? ' aria-current="page"' : ''}>${icon(ic)}<span>${label}</span></a>`).join('')}</nav>
-      <a class="side__me" href="#/settings">${avatar(me?.name, '', 'sm')}<span><b>${esc(me?.name || '')}</b><small>${esc(me?.church || '')}</small></span></a>`;
+      <label class="gsearch">${icon('search')}<input id="gq" type="search" placeholder="교제록 찾기 · 이름, 말씀, 나눔" value="${esc(state.q)}" autocomplete="off" enterkeyhint="search"><kbd>/</kbd></label>
+      <div class="topbar__right">
+        <a class="btn btn--primary topbar__write" id="writeBtn" href="#/write">${icon('pen')}<span>교제록 쓰기</span></a>
+        <a class="topbar__me" href="#/settings" aria-label="내 정보">${avatar(me?.name, '', 'sm')}</a>
+      </div>`;
+    const $gq = document.getElementById('gq');
+    if (!$gq.dataset.bound) $gq.dataset.bound = '1', $gq.addEventListener('input', () => {
+      state.q = $gq.value.trim();
+      if (location.hash.replace(/^#\/?/, '') !== '') { location.hash = '#/'; return; }
+      syncSearchBoxes();
+      listRedraw?.();
+    });
+    document.getElementById('side').innerHTML = `
+      <nav class="nav" aria-label="메뉴">${items.map(([k, href, label, ic]) => `<a href="${href}"${k === tab ? ' aria-current="page"' : ''}>${icon(ic)}<span>${label}</span>${badge(k)}</a>`).join('')}</nav>
+      <div class="nav-group" id="sideDepts"></div>
+      <div class="nav-group">
+        <div class="nav-group__head"><span>바로가기</span></div>
+        <a class="nav-sub" href="${esc(C.board.siteUrl)}" target="_blank" rel="noopener">${icon('external')}<span>교회 사이트 교제실</span></a>
+      </div>
+      <a class="side__me" href="#/settings">${avatar(me?.name, '', 'sm')}<span><b>${esc(me?.name || '')}</b><small>${esc(me?.church || '')}</small></span>${icon('right', 'ic--end')}</a>`;
     document.getElementById('tabbar').innerHTML = items.map(([k, href, label, ic]) =>
-      `<a href="${href}"${k === tab ? ' aria-current="page"' : ''}>${icon(ic)}<span>${label}</span></a>`).join('');
-    document.getElementById('mtop').innerHTML = `<a class="brand" href="#/">${brandMark}<span>${esc(APP)}</span></a><a class="mtop__me" href="#/settings" aria-label="내 정보">${avatar(me?.name, '', 'sm')}</a>`;
+      `<a href="${href}"${k === tab ? ' aria-current="page"' : ''}${k === 'write' ? ' id="writeTab"' : ''}>${icon(ic)}<span>${label}</span>${k === 'list' && n ? '<i class="dotbadge" aria-hidden="true"></i>' : ''}</a>`).join('');
+    renderSideDepts();
+  }
+  // 왼쪽 메뉴의 "부서" 묶음 (접었다 펼 수 있음)
+  function renderSideDepts() {
+    const el = document.getElementById('sideDepts');
+    if (!el) return;
+    const posts = state.posts || [];
+    const depts = [...new Set(posts.map((p) => p.dept))];
+    if (!depts.length) { el.innerHTML = ''; return; }
+    const open = store.get('deptOpen', true);
+    el.innerHTML = `
+      <button type="button" class="nav-group__head" aria-expanded="${open}"><span>부서</span>${icon('right', 'nav-group__ic')}</button>
+      <div class="nav-group__body"${open ? '' : ' hidden'}>
+        ${[['', '전체'], ...depts.map((d) => [d, d])].map(([k, l]) => `<button type="button" class="nav-sub" data-d="${esc(k)}" aria-pressed="${state.dept === k}"><i class="ddot ${k ? `t-${tone(k)}` : 'ddot--all'}"></i><span>${esc(l)}</span><small>${k ? posts.filter((p) => p.dept === k).length : posts.length}</small></button>`).join('')}
+      </div>`;
+    el.querySelector('.nav-group__head').onclick = () => { store.set('deptOpen', !open); renderSideDepts(); };
+    el.querySelector('.nav-group__body').onclick = (e) => {
+      const b = e.target.closest('[data-d]');
+      if (!b) return;
+      state.dept = b.dataset.d;
+      renderSideDepts();
+      if (location.hash.replace(/^#\/?/, '') !== '') location.hash = '#/'; else viewList();
+    };
   }
 
-  /* ─── 오른쪽 패널 (넓은 화면): 이번 주 기도제목 · 다가오는 일정 ─── */
+  /* ─── 처음 한 번만: 쓰기 버튼 안내 (코치마크) ─── */
+  function maybeCoach() {
+    if (store.get('coachDone', false)) return;
+    const target = [document.getElementById('writeBtn'), document.getElementById('writeTab')].find((x) => x && x.offsetParent);
+    if (!target) return;
+    const r = target.getBoundingClientRect();
+    const tip = document.createElement('div');
+    const below = r.top < window.innerHeight / 2;
+    tip.className = `coach ${below ? 'coach--below' : 'coach--above'}`;
+    tip.innerHTML = `<b>여기서 교제록을 써요</b><span>쓰는 내용은 자동으로 저장되고, 게시판에 바로 올릴 수 있어요.</span><button type="button" class="btn btn--sm">알겠어요</button>`;
+    document.getElementById('layer').appendChild(tip);
+    const place = () => {
+      const t = target.getBoundingClientRect();
+      const w = tip.offsetWidth;
+      tip.style.left = `${Math.max(12, Math.min(window.innerWidth - w - 12, t.left + t.width / 2 - w / 2))}px`;
+      tip.style.top = below ? `${t.bottom + 12}px` : `${t.top - tip.offsetHeight - 12}px`;
+      tip.style.setProperty('--arrow', `${t.left + t.width / 2 - parseFloat(tip.style.left)}px`);
+    };
+    place();
+    requestAnimationFrame(() => tip.classList.add('show'));
+    const done = () => { store.set('coachDone', true); tip.remove(); window.removeEventListener('resize', place); window.removeEventListener('hashchange', done); };
+    tip.querySelector('button').onclick = done;
+    window.addEventListener('resize', place);
+    window.addEventListener('hashchange', done);
+  }
+
+  /* ─── 오른쪽 패널 (넓은 화면): 쓰다 만 글 · 달력 · 이번 주 기도제목 ─── */
+  function ring(done, total) {
+    const r = 18, c = 2 * Math.PI * r, pct = total ? done / total : 0;
+    return `<svg class="ring" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="${r}" class="ring__bg"/><circle cx="22" cy="22" r="${r}" class="ring__fg" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - pct)}"/></svg><span class="ring__txt">${Math.round(pct * 100)}%</span>`;
+  }
   async function renderPanel() {
     const $p = document.getElementById('panel');
     if (!isWide() || !auth.hash) { $p.innerHTML = ''; return; }
-    if (!$p.innerHTML) $p.innerHTML = `<section class="pblock"><h2>${icon('heart')}이번 주 기도제목</h2><span class="sk sk-line"></span><span class="sk sk-line" style="width:70%"></span></section>`;
+    const draft = draftInfo();
     const posts = await loadPosts();
-    await Promise.all(posts.slice(0, 6).map(fetchBody));
-    const latest = posts.find((p) => p.prayers.length);
-    const sched = await loadSchedule();
     if (!auth.hash) return;
+    // 달력: 교제록이 있는 날에 점
+    const byDay = new Map();
+    posts.forEach((p) => { if (p.date) { const k = ymd(p.date); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(p); } });
+    if (!state.calMonth) {
+      const latest = posts.find((p) => p.date)?.date || new Date();
+      state.calMonth = new Date(latest.getFullYear(), latest.getMonth(), 1);
+    }
+    const m = state.calMonth;
+    const first = new Date(m.getFullYear(), m.getMonth(), 1);
+    const days = new Date(m.getFullYear(), m.getMonth() + 1, 0).getDate();
+    const todayKey = ymd(new Date());
+    const cells = [];
+    for (let i = 0; i < first.getDay(); i++) cells.push('<span></span>');
+    for (let d = 1; d <= days; d++) {
+      const k = ymd(new Date(m.getFullYear(), m.getMonth(), d));
+      const list = byDay.get(k) || [];
+      const dots = [...new Set(list.map((p) => p.dept))].slice(0, 3).map((dp) => `<i class="t-${tone(dp)}"></i>`).join('');
+      cells.push(`<button type="button" class="cal__d${k === todayKey ? ' is-today' : ''}${k === state.day ? ' is-on' : ''}" data-day="${k}"${list.length ? '' : ' disabled'} aria-label="${m.getMonth() + 1}월 ${d}일${list.length ? ` 교제록 ${list.length}개` : ''}">${d}<span class="cal__dots">${dots}</span></button>`);
+    }
+    const dayPosts = state.day ? (byDay.get(state.day) || []) : posts.filter((p) => p.date && monthKey(p.date) === monthKey(m)).slice(0, 4);
+    const latestPr = posts.find((p) => p.prayers.length);
     $p.innerHTML = `
-      <section class="pblock">
-        <h2>${icon('heart')}이번 주 기도제목${latest ? `<small>${tag(latest.dept)}</small>` : ''}</h2>
-        ${latest ? `<ul class="plist">${latest.prayers.slice(0, 5).map((x) => `<li>${avatar(x.name, '', 'xs')}<span><b>${esc(x.name)}</b>${esc(x.text)}</span></li>`).join('')}</ul>
-          <a class="pblock__more" href="#/prayers">기도제목 모두 보기${icon('right')}</a>` : '<p class="hint">아직 기도제목이 없어요</p>'}
+      <section class="promo">
+        <div class="promo__top">
+          <div><small>${draft ? '쓰다 만 교제록' : '이번 주 교제록'}</small><b>${draft ? `${draft.done}/${draft.total} 단계 채웠어요` : '아직 안 쓰셨다면'}</b></div>
+          ${draft ? `<div class="ring-wrap">${ring(draft.done, draft.total)}</div>` : ''}
+        </div>
+        <a class="btn btn--light btn--sm" href="#/write">${draft ? '이어 쓰기' : '지금 쓰기'}</a>
       </section>
-      ${sched.length ? `<section class="pblock">
-        <h2>${icon('calendar')}다가오는 일정</h2>
-        ${`<ul class="slist">${sched.map((s) => {
-          const d = parseDate(s.start_date);
-          return `<li><span class="datebox"><b>${d ? d.getDate() : ''}</b><small>${d ? `${d.getMonth() + 1}월` : ''}</small></span><span><b>${esc(s.title || '')}</b><small>${[d ? WEEK[d.getDay()] + '요일' : '', String(s.start_time || '').slice(0, 5), s.location].filter(Boolean).map(esc).join(' · ')}</small></span></li>`;
-        }).join('')}</ul>`}
-      </section>` : ''}`;
+      <section class="pblock card">
+        <div class="cal__head">
+          <b>${m.getFullYear()}년 ${m.getMonth() + 1}월</b>
+          <div><button type="button" class="icon-btn" data-cal="-1" aria-label="이전 달">${icon('left')}</button><button type="button" class="icon-btn" data-cal="1" aria-label="다음 달">${icon('right')}</button></div>
+        </div>
+        <div class="cal">${WEEK.map((w) => `<span class="cal__w">${w}</span>`).join('')}${cells.join('')}</div>
+        <div class="evts">
+          ${dayPosts.length ? dayPosts.map((p) => `<a class="evt" href="#/post/${encodeURIComponent(p.id)}"><i class="evt__bar t-${tone(p.dept)}"></i><span><small>${fullDate(p.date)}${p.dept ? ` · ${esc(p.dept)}` : ''}</small><b>${esc(p.title)}</b></span></a>`).join('')
+            : '<p class="hint">이 달엔 교제록이 없어요</p>'}
+        </div>
+      </section>
+      <section class="pblock card">
+        <h2>${icon('heart')}이번 주 기도제목</h2>
+        <div id="panelPrayers">${latestPr ? prayerList(latestPr) : '<span class="sk sk-line"></span><span class="sk sk-line" style="width:70%"></span>'}</div>
+      </section>`;
+    $p.querySelectorAll('[data-cal]').forEach((b) => { b.onclick = () => { state.calMonth = new Date(m.getFullYear(), m.getMonth() + Number(b.dataset.cal), 1); renderPanel(); }; });
+    $p.querySelectorAll('[data-day]').forEach((b) => {
+      b.onclick = () => {
+        state.day = state.day === b.dataset.day ? '' : b.dataset.day;
+        renderPanel();
+        if (location.hash.replace(/^#\/?/, '') !== '') location.hash = '#/'; else listRedraw?.();
+      };
+    });
+    if (!latestPr) {
+      await Promise.all(posts.slice(0, 6).map(fetchBody));
+      const pr = posts.find((p) => p.prayers.length);
+      const el = document.getElementById('panelPrayers');
+      if (el) el.innerHTML = pr ? prayerList(pr) : '<p class="hint">아직 기도제목이 없어요</p>';
+    }
   }
-  async function loadSchedule() {
-    if (state.schedule) return state.schedule;
-    const start = new Date();
-    const end = new Date(Date.now() + 45 * 86400e3);
-    const r = await callApi('schedule', { chId: String(C.board.chId), gCode: String(C.groupCode || ''), start: ymd(start), end: ymd(end), limit: '6' });
-    state.schedule = r.status === 'ok' && Array.isArray(r.list) ? r.list.slice(0, 5) : [];
-    return state.schedule;
-  }
+  const prayerList = (p) => `<p class="hint" style="margin-bottom:10px">${tag(p.dept)} ${fullDate(p.date)}</p>
+    <ul class="plist">${p.prayers.slice(0, 5).map((x) => `<li>${avatar(x.name, '', 'xs')}<span><b>${esc(x.name)}</b>${esc(x.text)}</span></li>`).join('')}</ul>
+    <a class="pblock__more" href="#/prayers">기도제목 모두 보기${icon('right')}</a>`;
 
   /* ─── 로그인 화면 (로그인해야 들어갈 수 있음) ─── */
   function signOut() {
@@ -1384,23 +1548,38 @@
   function viewLogin() {
     $app.innerHTML = `
       <div class="login">
-        <div class="login__sky" aria-hidden="true"><i class="c1"></i><i class="c2"></i><i class="c3"></i><i class="sun"></i></div>
-        <div class="login__inner">
-          <div class="login__brand">
-            <span class="mark mark--lg" aria-hidden="true"><i></i></span>
-            <h1>${esc(APP)}</h1>
-            <p>교제록과 기도제목을 함께 나눠요</p>
+        <div class="login__art" id="loginArt" aria-hidden="true">
+          <div class="login__sky"><i class="c1"></i><i class="c2"></i><i class="c3"></i><i class="sun"></i></div>
+        </div>
+        <div class="login__panel">
+          <div class="login__inner">
+            <div class="login__brand">
+              <span class="mark mark--lg" aria-hidden="true"></span>
+              <h1>${esc(APP)}</h1>
+              <p>교제록과 기도제목을 함께 나눠요</p>
+            </div>
+            <form class="login__form" id="loginForm" autocomplete="on" novalidate>
+              <label class="field"><span class="field__label">깨사모 아이디</span><input class="input" name="userid" value="${esc(store.get('lastUserid', ''))}" autocomplete="username" autocapitalize="off" spellcheck="false" enterkeyhint="next"></label>
+              <label class="field"><span class="field__label">비밀번호</span>
+                <span class="pw"><input class="input" name="password" type="password" autocomplete="current-password" enterkeyhint="go"><button type="button" class="pw__eye" aria-label="비밀번호 보기" aria-pressed="false">${icon('eye')}</button></span></label>
+              <p class="inline-error" id="loginError" role="alert" hidden></p>
+              <button class="btn btn--primary btn--lg btn--block" type="submit" id="loginBtn">로그인</button>
+            </form>
+            <p class="login__note">${icon('lock')}회원만 들어올 수 있어요. 비밀번호는 저장하지 않아요.</p>
           </div>
-          <form class="card login__card" id="loginForm" autocomplete="on" novalidate>
-            <label class="field"><span class="field__label">깨사모 아이디</span><input class="input" name="userid" value="${esc(store.get('lastUserid', ''))}" autocomplete="username" autocapitalize="off" spellcheck="false" enterkeyhint="next"></label>
-            <label class="field"><span class="field__label">비밀번호</span>
-              <span class="pw"><input class="input" name="password" type="password" autocomplete="current-password" enterkeyhint="go"><button type="button" class="pw__eye" aria-label="비밀번호 보기" aria-pressed="false">${icon('eye')}</button></span></label>
-            <p class="inline-error" id="loginError" role="alert" hidden></p>
-            <button class="btn btn--primary btn--lg btn--block" type="submit" id="loginBtn">로그인</button>
-          </form>
-          <p class="login__note">${icon('lock')}회원만 들어올 수 있어요. 비밀번호는 저장하지 않아요.</p>
         </div>
       </div>`;
+    // 교회 그림 (assets/church.png|jpg|webp) — 있으면 배경으로, 없으면 하늘 그림
+    const art = document.getElementById('loginArt');
+    const tryImg = (list) => {
+      if (!list.length) return;
+      const img = new Image();
+      img.onload = () => { art.style.backgroundImage = `url("${list[0]}")`; art.classList.add('has-img'); };
+      img.onerror = () => tryImg(list.slice(1));
+      img.src = list[0];
+    };
+    tryImg(['/assets/church.png', '/assets/church.jpg', '/assets/church.webp']);
+
     const $f = document.getElementById('loginForm');
     const $btn = document.getElementById('loginBtn');
     const $err = document.getElementById('loginError');
@@ -1453,6 +1632,7 @@
     const restore = name === '' && prevName === 'post';
     prevName = name || 'list';
     renderChrome(tab === 'post' ? 'list' : tab);
+    loadPosts().then(() => { if (auth.hash) renderChrome(tab === 'post' ? 'list' : tab); });
     document.title = tab === 'list' ? APP : document.title;
     window.scrollTo(0, 0);
     renderPanel();
@@ -1475,7 +1655,7 @@
   // "/" 키로 검색칸으로
   document.addEventListener('keydown', (e) => {
     if (e.key !== '/' || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) return;
-    const s = document.querySelector('.search input');
+    const s = [document.getElementById('gq'), document.querySelector('.search input')].find((x) => x && x.offsetParent);
     if (s) { e.preventDefault(); s.focus(); }
   });
 

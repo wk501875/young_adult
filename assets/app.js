@@ -319,7 +319,7 @@
     let t = store.get('theme', 'light');
     if (t === 'system') t = darkMQ.matches ? 'dark' : 'light';
     document.documentElement.setAttribute('data-theme', t);
-    document.getElementById('themeColor')?.setAttribute('content', t === 'dark' ? '#131917' : '#f6eedb');
+    document.getElementById('themeColor')?.setAttribute('content', t === 'dark' ? '#0a1328' : '#f3f3f3');
   }
   darkMQ.addEventListener?.('change', applyTheme);
   applyTheme();

@@ -22,6 +22,7 @@ const APIS = {
   board_comment: { path: '/in/load_boardb_comment.php' },
   board_write:   { path: '/in/boardb_write_json.php', needHash: true, write: true },
   board_upload:  { path: '/in/boardb_upload_json.php', needHash: true },  // multipart 전용
+  comment:       { path: '/in/boardb_pro_json.php', needHash: true },    // 댓글 달기·지우기 (mode)
 };
 
 const json = (o) =>
@@ -126,6 +127,31 @@ async function rosters(env, p) {
   return { status: 'ok', result: out };
 }
 
+// 댓글 달기(add_comment)·지우기(del_comment): 청년회교제실 글에만 허락
+const CH_ID = '86';
+async function comment(env, p) {
+  const mode = p.mode;
+  if (mode !== 'add_comment' && mode !== 'del_comment') return { status: 'error', result: '허용되지 않은 댓글 명령입니다' };
+  if (!/^\d+$/.test(p.board_uid || '')) return { status: 'error', result: '글 번호가 없습니다' };
+  const text = String(p.comment || '').trim();
+  if (mode === 'add_comment' && text.length < 2) return { status: 'error', result: '댓글은 2자 이상 써 주세요' };
+  if (text.length > 1000) return { status: 'error', result: '댓글이 너무 깁니다 (1000자 이하)' };
+  if (mode === 'del_comment' && !/^\d+$/.test(p.comment_uid || '')) return { status: 'error', result: '댓글 번호가 없습니다' };
+
+  // 이 글이 정말 허락한 게시판의 글인지 확인
+  const post = await relay(APIS.board_post.path, {
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dev_name: DEV_NAME, tokenId: env.JBCH_TOKEN, hash: p.hash, chId: CH_ID, use_kind: '1', flag: '1', uid: p.board_uid }),
+  });
+  const row = post.status === 'ok' && Array.isArray(post.result) ? post.result.find((x) => String(x.postUid) === p.board_uid) : null;
+  if (!row || !WRITE_BOARDS.includes(String(row.position))) return { status: 'error', result: '댓글을 달 수 없는 글입니다' };
+
+  const body = { dev_name: DEV_NAME, tokenId: env.JBCH_TOKEN, hash: p.hash, mode, board_uid: p.board_uid, chId: CH_ID };
+  if (mode === 'add_comment') { body.comment = text; body.url = String(p.url || '').slice(0, 300); }
+  else body.comment_uid = p.comment_uid;
+  return relay(APIS.comment.path, { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+}
+
 async function upload(env, request) {
   const form = await request.formData().catch(() => null);
   if (!form) return { status: 'error', result: '사진을 읽지 못했습니다' };
@@ -161,6 +187,7 @@ export async function onRequestPost({ request, env }) {
   if (spec.needHash && !clean.hash) return json({ status: 'error', result: 'hash가 필요합니다' });
   if (api === 'me') return json(await me(env, clean));
   if (api === 'rosters') return json(await rosters(env, clean));
+  if (api === 'comment') return json(await comment(env, clean));
   if (spec.write && !WRITE_BOARDS.includes(clean.boardId)) return json({ status: 'error', result: '글을 쓸 수 없는 게시판입니다' });
 
   return json(await relay(spec.path, {

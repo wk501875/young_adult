@@ -514,6 +514,129 @@ async function upload(env, form) {
   return relay(APIS.board_upload.path, { body: out });
 }
 
+/* ═══ 휴대폰 알림 (Web Push) ═════════════════════
+ * - 알림용 열쇠(VAPID)는 서버가 처음 쓸 때 직접 만들어 KV에만 둠 (코드·화면에 비밀값 없음)
+ * - 알림은 내용 없이 보내고, 휴대폰의 서비스 워커(/sw.js)가 push_latest로 문구를 받아 보여 줌
+ * - push_run: GitHub Actions가 10분마다 부르지만 실제 확인은 50분에 한 번
+ *   · 앨범(청년회·결혼식)은 공개라 그냥 확인
+ *   · 교제록(회원 전용)은 최고 관리자가 앱을 열 때 저장해 둔 로그인 정보로 확인
+ * - 무료 요금제는 한 번에 바깥 요청 50개까지라, 받는 사람이 많으면 40명씩 나눠 보냄 (more: true)
+ */
+const PUSH_GAP = 50 * 60 * 1000;
+const PUSH_CHUNK = 40;
+const PUSH_BOARDS = [
+  { key: 'album:7159', boardId: '7159', use_kind: '3', name: '청년회 앨범', kind: 'album' },
+  { key: 'album:7161', boardId: '7161', use_kind: '3', name: '결혼식 앨범', kind: 'album' },
+  { key: 'board:2122', boardId: '2122', use_kind: '1', name: '교제록', kind: 'post', member: true },
+];
+const b64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const b64uText = (s) => b64u(new TextEncoder().encode(s));
+async function vapidKeys(env) {
+  const old = await env.CAL.get('push:vapid', 'json');
+  if (old) return old;
+  const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  const k = { priv: await crypto.subtle.exportKey('jwk', pair.privateKey), pub: b64u(await crypto.subtle.exportKey('raw', pair.publicKey)) };
+  await env.CAL.put('push:vapid', JSON.stringify(k));
+  return k;
+}
+async function vapidAuth(endpoint, k) {
+  const head = b64uText(JSON.stringify({ typ: 'JWT', alg: 'ES256' }));
+  const claims = b64uText(JSON.stringify({ aud: new URL(endpoint).origin, exp: Math.floor(Date.now() / 1000) + 12 * 3600, sub: 'https://young-adult.pages.dev' }));
+  const key = await crypto.subtle.importKey('jwk', k.priv, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, key, new TextEncoder().encode(`${head}.${claims}`));
+  return `vapid t=${head}.${claims}.${b64u(sig)}, k=${k.pub}`;
+}
+const subId = async (endpoint) => b64u(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(endpoint))).slice(0, 32);
+const deptOfTitle = (s) => (String(s).match(/\[\s*\d{4}\s*([^\]]+?)\s*\]/) || [])[1] || (/청년회/.test(s) ? '청년회' : '');
+
+async function latestRows(env, b, hash) {
+  const r = await relay(APIS.board_post.path, {
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dev_name: DEV_NAME, tokenId: env.JBCH_TOKEN, chId: '86', flag: '1', use_kind: b.use_kind, boardId: b.boardId, page: '1', limit: '10', ...(hash ? { hash } : {}) }),
+  });
+  return r.status === 'ok' && Array.isArray(r.result) ? r.result.filter((x) => x.postUid && x.subject) : null;
+}
+// 지난번 확인 뒤에 올라온 글 (글 번호가 커지는 걸로 판단, 처음엔 기준만 잡고 알림 없음)
+async function newSince(env, key, rows) {
+  const seenKey = `push:seen:${key}`;
+  const seen = Number(await env.CAL.get(seenKey)) || 0;
+  const max = Math.max(0, ...rows.map((x) => Number(x.postUid) || 0));
+  if (max > seen) await env.CAL.put(seenKey, String(max));
+  return seen ? rows.filter((x) => Number(x.postUid) > seen) : [];
+}
+function pushMessage(found) {
+  const posts = found.filter((f) => f.kind === 'post');
+  const albums = found.filter((f) => f.kind === 'album');
+  if (found.length === 1) {
+    const f = found[0];
+    return f.kind === 'post'
+      ? { title: '새 교제록이 올라왔어요', body: `${f.dept || '청년회'} 교제록을 확인해 보세요`, url: f.url }
+      : { title: `${f.name}에 새 글이 올라왔어요`, body: f.title, url: f.url };
+  }
+  const depts = [...new Set(posts.map((f) => f.dept || '청년회'))];
+  const parts = [];
+  if (posts.length) parts.push(`교제록 ${posts.length}개 (${depts.join(', ')})`);
+  if (albums.length) parts.push(`앨범 ${albums.length}개`);
+  return { title: `새 글 ${found.length}개가 올라왔어요`, body: parts.join(' · '), url: posts.length ? '/#/' : '/#/album' };
+}
+async function pushSendChunk(env, job) {
+  const k = await vapidKeys(env);
+  const page = await env.CAL.list({ prefix: 'psub:', limit: PUSH_CHUNK, ...(job.cursor ? { cursor: job.cursor } : {}) });
+  let sent = 0, gone = 0;
+  for (const key of page.keys) {
+    const endpoint = key.metadata?.endpoint;
+    if (!endpoint) continue;
+    try {
+      const res = await fetch(endpoint, { method: 'POST', headers: { TTL: '86400', Urgency: 'normal', Authorization: await vapidAuth(endpoint, k), 'Content-Length': '0' } });
+      if (res.status === 404 || res.status === 410) { await env.CAL.delete(key.name); gone++; } else if (res.ok) sent++;
+    } catch { /* 한 사람 실패는 넘어감 */ }
+  }
+  if (page.list_complete) { await env.CAL.delete('push:job'); return { sent, gone, more: false }; }
+  await env.CAL.put('push:job', JSON.stringify({ cursor: page.cursor, at: job.at }));
+  return { sent, gone, more: true };
+}
+async function pushRun(env) {
+  const job = await env.CAL.get('push:job', 'json');
+  if (job && Date.now() - job.at < PUSH_GAP) return { status: 'ok', result: await pushSendChunk(env, job) };
+  const now = Date.now();
+  const last = Number(await env.CAL.get('push:lastRun')) || 0;
+  if (now - last < PUSH_GAP - 60e3) return { status: 'ok', result: { skip: true, nextInMin: Math.ceil((last + PUSH_GAP - now) / 60e3) } };
+  await env.CAL.put('push:lastRun', String(now));
+  const reader = await env.CAL.get('push:reader');
+  const found = [];
+  for (const b of PUSH_BOARDS) {
+    if (b.member && !reader) continue;
+    const rows = await latestRows(env, b, b.member ? reader : '');
+    if (!rows) continue; // 못 읽으면 기준을 건드리지 않음
+    for (const x of await newSince(env, b.key, rows)) {
+      found.push(b.kind === 'post'
+        ? { kind: 'post', dept: deptOfTitle(x.subject), url: `/#/post/${x.postUid}` }
+        : { kind: 'album', name: b.name, title: String(x.subject).trim(), url: `/#/album/${x.postUid}` });
+    }
+  }
+  if (!found.length) return { status: 'ok', result: { found: 0, reader: !!reader } };
+  await env.CAL.put('push:latest', JSON.stringify({ ...pushMessage(found), at: now }));
+  return { status: 'ok', result: { found: found.length, ...(await pushSendChunk(env, { cursor: '', at: now })) } };
+}
+async function push(env, api, p, raw) {
+  if (!env.CAL) return { status: 'error', result: '알림 저장소(KV)가 연결되지 않았어요' };
+  if (api === 'push_key') return { status: 'ok', result: (await vapidKeys(env)).pub };
+  if (api === 'push_latest') return { status: 'ok', result: await env.CAL.get('push:latest', 'json') };
+  if (api === 'push_run') return pushRun(env);
+  if (api === 'push_sub' || api === 'push_unsub') {
+    if (!p.hash) return { status: 'error', result: 'hash가 필요합니다' };
+    const who = await whoAmI(env, p.hash);
+    if (who.error) return who.error;
+    const endpoint = String(raw.sub?.endpoint || '');
+    if (!/^https:\/\/[^\s]+$/.test(endpoint) || endpoint.length > 800) return { status: 'error', result: '알림 주소가 올바르지 않아요' };
+    const name = `psub:${await subId(endpoint)}`;
+    if (api === 'push_unsub') { await env.CAL.delete(name); return { status: 'ok' }; }
+    await env.CAL.put(name, JSON.stringify({ userid: who.u.userid, at: Date.now() }), { metadata: { endpoint } });
+    return { status: 'ok' };
+  }
+  return { status: 'error', result: `허용되지 않은 API: ${api}` };
+}
+
 export async function onRequestPost({ request, env }) {
   if (!env.JBCH_TOKEN) return json({ status: 'error', result: 'JBCH_TOKEN 환경 변수가 설정되지 않았습니다' });
 
@@ -528,6 +651,7 @@ export async function onRequestPost({ request, env }) {
 
   // 월정표: 로그인 필요, 값 모양은 calendar() 안에서 직접 확인
   // 번개: 로그인 필요, 형제/자매 게시판은 서버에서 회원정보 성별로 정함
+  if (/^push_/.test(api)) return json(await push(env, api, clean, params || {}));
   if (/^bg_/.test(api)) {
     if (!clean.hash) return json({ status: 'error', result: 'hash가 필요합니다' });
     return json(await meetup(env, api, clean, params || {}));
@@ -546,6 +670,8 @@ export async function onRequestPost({ request, env }) {
     // 이름·관리자 여부 + 부서 관리자·소속 부서
     const who = await whoAmI(env, clean.hash);
     if (who.error) return json(who.error);
+    // 새 교제록 알림용: 최고 관리자의 로그인 정보로 회원 전용 게시판을 확인 (KV에만, 바뀌었을 때만 저장)
+    if (who.superAdmin && env.CAL && (await env.CAL.get('push:reader')) !== clean.hash) await env.CAL.put('push:reader', clean.hash);
     return json({ status: 'ok', result: { ...who.u, deptAdminOf: who.adminOf, depts: who.viewDepts } });
   }
   if (api === 'rosters') return json(await rosters(env, clean));

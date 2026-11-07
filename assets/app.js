@@ -573,6 +573,7 @@
           </div>
         </div>
       </section>
+      <section class="card upnext" id="upnext" hidden></section>
       <div class="feed-head">
         <h2 id="feedTitle">최근 교제록</h2>
         <button type="button" class="link-btn" id="clearFilter" hidden>전체 보기</button>
@@ -581,6 +582,18 @@
       <div class="m-only">${searchBox('q', '이름, 말씀, 나눔으로 찾기', state.q)}</div>
       <div id="list">${skeletonCards(3)}</div>
       <div class="more" id="more"></div>`;
+    // 다가오는 일정 (월정표에서)
+    upcoming(3).then((list) => {
+      const el = document.getElementById('upnext');
+      if (!el || !list || !list.length) return;
+      el.hidden = false;
+      el.innerHTML = `<div class="upnext__head"><h2>${icon('calendar')}다가오는 일정</h2><a class="link-btn" href="#/calendar">월정표 보기${icon('right')}</a></div>
+        <div class="upnext__list">${list.map((e) => {
+          const d = parseDate(e.start);
+          return `<a class="upnext__item" href="#/calendar" data-day="${esc(e.start)}"><span class="datebox ev-${evTone(e)}"><b>${d.getDate()}</b><small>${WEEK[d.getDay()]}</small></span><span><b>${esc(e.title)}</b><small>${esc([evLabel(e), e.time, e.place].filter(Boolean).join(' · '))}</small></span></a>`;
+        }).join('')}</div>`;
+      el.querySelectorAll('[data-day]').forEach((a) => a.addEventListener('click', () => { state.calView = a.dataset.day.slice(0, 7); state.calDay = a.dataset.day; }));
+    });
     const posts = await loadPosts();
     if (!document.getElementById('list')) return;
     if (state.source === 'error') {
@@ -827,7 +840,12 @@
     const $form = document.getElementById('cmtForm');
     const $ta = $form.comment;
     const $send = $form.querySelector('button');
-    const autosize = () => { $ta.style.height = 'auto'; $ta.style.height = Math.min($ta.scrollHeight, 160) + 'px'; };
+    // 댓글 칸 높이: 비었으면 한 줄, 쓰는 만큼 늘어나다 다섯 줄에서 멈춤 (일부 휴대폰에서 칸이 길게 나오던 문제)
+    const autosize = () => {
+      if (!$ta.value) { $ta.style.height = ''; return; }
+      $ta.style.height = '0px';
+      $ta.style.height = `${Math.min(Math.max($ta.scrollHeight, 34), 120)}px`;
+    };
     $ta.addEventListener('input', () => { autosize(); $send.disabled = $ta.value.trim().length < 2; });
     $ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) $form.requestSubmit(); });
     $form.onsubmit = async (e) => {
@@ -1317,6 +1335,9 @@
         </div>
       </section>
       <div class="list-card card">
+        ${isAdmin() ? `<a href="#/admin">${icon('users')}<span>관리 · 부서와 부서 관리자</span>${icon('right', 'ic--end')}</a>
+        <a href="#/attendance">${icon('chart')}<span>참석 흐름</span>${icon('right', 'ic--end')}</a>` : ''}
+        ${auth.me?.deptAdminOf?.length ? `<a href="#/calendar">${icon('calendar')}<span>부서 일정 올리기 · ${esc(auth.me.deptAdminOf.join(', '))}</span>${icon('right', 'ic--end')}</a>` : ''}
         <a href="${esc(C.board.siteUrl)}" target="_blank" rel="noopener">${icon('external')}<span>교회 사이트 청년회교제실</span>${icon('right', 'ic--end')}</a>
         <button type="button" id="logout">${icon('logout')}<span>로그아웃</span>${icon('right', 'ic--end')}</button>
       </div>
@@ -1367,18 +1388,492 @@
     };
   }
 
+  /* ═══ 화면: 일정 (월정표) ═══════════════════════
+   * 교회 전체 · 청년회 · 부서 일정을 한 달 달력으로. 부서 일정은 그 부서 사람만 봐요.
+   */
+  const SCOPE_LABEL = { church: '교회 전체', youth: '청년회', dept: '부서' };
+  const thisMonth = () => ymd(new Date()).slice(0, 7);
+  const addMonth = (m, n) => { const [y, mo] = m.split('-').map(Number); const d = new Date(y, mo - 1 + n, 1); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; };
+  const evLabel = (e) => (e.scope === 'dept' ? e.dept : SCOPE_LABEL[e.scope]);
+  const evTone = (e) => (e.scope === 'church' ? 'church' : e.scope === 'youth' ? 'youth' : tone(e.dept));
+  const evWhen = (e) => {
+    const s = parseDate(e.start), en = parseDate(e.end || e.start);
+    const d1 = s ? `${s.getMonth() + 1}월 ${s.getDate()}일 (${WEEK[s.getDay()]})` : '';
+    if (!en || e.end === e.start || !e.end) return d1 + (e.time ? ` · ${e.time}` : '');
+    return `${d1} ~ ${en.getMonth() + 1 !== s.getMonth() + 1 ? `${en.getMonth() + 1}월 ` : ''}${en.getDate()}일 (${WEEK[en.getDay()]})${e.time ? ` · ${e.time}` : ''}`;
+  };
+  const calCache = new Map(); // 달 → 응답
+  async function loadMonth(month, force) {
+    if (!force && calCache.has(month)) return calCache.get(month);
+    const r = await callApi('cal_get', { month });
+    if (r.status === 'ok' || r.perms) calCache.set(month, r);
+    return r;
+  }
+  const calFilter = () => store.get('calFilter', { church: true, youth: true, depts: null }); // depts: null = 볼 수 있는 부서 전부
+  const passFilter = (e, f) => (e.scope === 'church' ? f.church : e.scope === 'youth' ? f.youth : (f.depts ? f.depts.includes(e.dept) : true));
+
+  async function viewCalendar() {
+    if (!state.calView) state.calView = thisMonth();
+    const month = state.calView;
+    const [y, mo] = month.split('-').map(Number);
+    $app.innerHTML = `
+      <header class="cal-head">
+        <div class="cal-head__title">
+          <h1>${y}년 ${mo}월 <span>일정</span></h1>
+          <p class="cal-head__theme" id="calTheme"></p>
+        </div>
+        <div class="cal-head__nav">
+          <button type="button" class="icon-btn icon-btn--lg" id="calPrev" aria-label="지난달">${icon('left')}</button>
+          <button type="button" class="btn btn--sm" id="calToday">이번 달</button>
+          <button type="button" class="icon-btn icon-btn--lg" id="calNext" aria-label="다음 달">${icon('right')}</button>
+        </div>
+      </header>
+      <div class="cal-tools">
+        <div class="chips chips--tight" id="calChips"></div>
+        <div class="cal-tools__right" id="calAdmin"></div>
+      </div>
+      <div id="calBody">${skeletonCards(2)}</div>`;
+    document.getElementById('calPrev').onclick = () => { state.calView = addMonth(month, -1); viewCalendar(); };
+    document.getElementById('calNext').onclick = () => { state.calView = addMonth(month, 1); viewCalendar(); };
+    document.getElementById('calToday').onclick = () => { state.calView = thisMonth(); viewCalendar(); };
+
+    const r = await loadMonth(month);
+    if (state.calView !== month || !document.getElementById('calBody')) return;
+    const perms = r.perms || { viewDepts: [], editDepts: [] };
+    if (r.status !== 'ok') {
+      document.getElementById('calBody').innerHTML = emptyState({ ic: 'calendar', title: '일정을 불러오지 못했어요', desc: esc(errText(r)), action: `<button class="btn btn--sm" type="button" id="calRetry">${icon('refresh')}다시 불러오기</button>` });
+      document.getElementById('calRetry').onclick = () => { calCache.delete(month); viewCalendar(); };
+      return;
+    }
+    const meta = r.meta || {};
+    document.getElementById('calTheme').innerHTML = [
+      meta.theme ? `<span class="theme-pill">주제</span>${esc(meta.theme)}` : '',
+      meta.image ? `<button type="button" class="link-btn" id="calImg">${icon('image')}월정표 원본</button>` : '',
+    ].filter(Boolean).join(' ');
+    document.getElementById('calImg')?.addEventListener('click', () => showMonthImage(month));
+
+    // 거르기 칩: 교회 전체 · 청년회 · 볼 수 있는 부서
+    const f = calFilter();
+    const drawChips = () => {
+      const cur = calFilter();
+      const chips = [
+        ['church', '교회 전체', cur.church],
+        ['youth', '청년회', cur.youth],
+        ...perms.viewDepts.map((d) => [`d:${d}`, d, cur.depts ? cur.depts.includes(d) : true]),
+      ];
+      document.getElementById('calChips').innerHTML = chips.map(([k, l, on]) =>
+        `<button type="button" class="chip chip--ev ev-${k === 'church' ? 'church' : k === 'youth' ? 'youth' : tone(l)}" data-k="${esc(k)}" aria-pressed="${on}"><i></i>${esc(l)}</button>`).join('');
+    };
+    drawChips();
+    document.getElementById('calChips').onclick = (e) => {
+      const b = e.target.closest('[data-k]');
+      if (!b) return;
+      const cur = calFilter();
+      const k = b.dataset.k;
+      if (k === 'church' || k === 'youth') cur[k] = !cur[k];
+      else {
+        const d = k.slice(2);
+        const set = new Set(cur.depts || perms.viewDepts);
+        if (set.has(d)) set.delete(d); else set.add(d);
+        cur.depts = [...set];
+      }
+      store.set('calFilter', cur);
+      drawChips(); drawBody();
+    };
+
+    // 관리자 버튼
+    const canAdd = perms.editShared || perms.editDepts.length;
+    document.getElementById('calAdmin').innerHTML = `
+      ${perms.superAdmin ? `<button type="button" class="btn btn--sm" id="calMeta">${icon('pen')}이달 정보</button>` : ''}
+      ${canAdd ? `<button type="button" class="btn btn--sm" id="calBulk">${icon('copy')}여러 개 붙여넣기</button><button type="button" class="btn btn--primary btn--sm" id="calAdd">${icon('plus')}일정 추가</button>` : ''}`;
+    document.getElementById('calAdd')?.addEventListener('click', () => editEvent(null, perms, month));
+    document.getElementById('calBulk')?.addEventListener('click', () => bulkEvents(perms, month));
+    document.getElementById('calMeta')?.addEventListener('click', () => editMonthMeta(month, meta));
+
+    let selected = state.calDay && state.calDay.startsWith(month) ? state.calDay : '';
+    function drawBody() {
+      const ff = calFilter();
+      const events = (r.events || []).filter((e) => passFilter(e, ff));
+      document.getElementById('calBody').innerHTML = `
+        <div class="card mcal">${monthGrid(month, events, selected)}</div>
+        ${meta.memo ? `<section class="card memo"><h2>${icon('pin')}이달 안내</h2><p>${esc(meta.memo)}</p></section>` : ''}
+        <section class="agenda" id="agenda">${agenda(month, events, selected)}</section>`;
+      document.querySelectorAll('.mcal [data-day]').forEach((c) => {
+        c.onclick = (e) => {
+          const evBtn = e.target.closest('[data-ev]');
+          if (evBtn) return openEvent(findEv(evBtn.dataset.ev), perms, month);
+          selected = selected === c.dataset.day ? '' : c.dataset.day;
+          state.calDay = selected;
+          drawBody();
+          if (selected && !isWide()) document.getElementById('agenda').scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'start' });
+        };
+      });
+      document.querySelectorAll('#agenda [data-ev]').forEach((b) => { b.onclick = () => openEvent(findEv(b.dataset.ev), perms, month); });
+      document.getElementById('agendaAll')?.addEventListener('click', () => { selected = ''; state.calDay = ''; drawBody(); });
+    }
+    const findEv = (id) => (r.events || []).find((e) => e.id === id);
+    drawBody();
+  }
+
+  // 한 달 달력: 여러 날 일정은 이어지는 막대로 (주마다 줄 맞춤)
+  function monthGrid(month, events, selected) {
+    const [y, mo] = month.split('-').map(Number);
+    const first = new Date(y, mo - 1, 1);
+    const start = new Date(y, mo - 1, 1 - first.getDay());
+    const todayK = ymd(new Date());
+    let html = `<div class="mcal__w">${WEEK.map((w, i) => `<span class="${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}</span>`).join('')}</div>`;
+    for (let w = 0; w < 6; w++) {
+      const days = Array.from({ length: 7 }, (_, i) => new Date(start.getFullYear(), start.getMonth(), start.getDate() + w * 7 + i));
+      if (w > 3 && days[0].getMonth() !== mo - 1) break;
+      const keys = days.map(ymd);
+      // 이 주에 걸친 일정을 줄(slot)에 배치
+      const inWeek = events.filter((e) => e.start <= keys[6] && (e.end || e.start) >= keys[0])
+        .sort((a, b) => ((b.end || b.start) > b.start) - ((a.end || a.start) > a.start) || a.start.localeCompare(b.start) || (a.time || '').localeCompare(b.time || ''));
+      const slots = []; // slot → 7칸 사용 여부
+      const placed = [];
+      for (const e of inWeek) {
+        const s = Math.max(0, keys.indexOf(e.start) >= 0 ? keys.indexOf(e.start) : 0);
+        const endKey = e.end || e.start;
+        const en = keys.indexOf(endKey) >= 0 ? keys.indexOf(endKey) : 6;
+        let slot = 0;
+        while (slots[slot] && slots[slot].slice(s, en + 1).some(Boolean)) slot++;
+        slots[slot] = slots[slot] || Array(7).fill(false);
+        for (let i = s; i <= en; i++) slots[slot][i] = true;
+        placed.push({ e, s, en, slot, contL: e.start < keys[0], contR: endKey > keys[6] });
+      }
+      const MAX = 3;
+      html += `<div class="mcal__week">`;
+      days.forEach((d, i) => {
+        const k = keys[i];
+        const out = d.getMonth() !== mo - 1;
+        const here = placed.filter((p) => p.s <= i && p.en >= i);
+        const shown = [];
+        for (let sl = 0; sl < Math.min(slots.length, MAX); sl++) shown.push(here.find((p) => p.slot === sl) || null);
+        const more = here.filter((p) => p.slot >= MAX).length;
+        html += `<div class="mcal__d${out ? ' is-out' : ''}${k === todayK ? ' is-today' : ''}${k === selected ? ' is-on' : ''}${i === 0 ? ' sun' : i === 6 ? ' sat' : ''}" data-day="${k}" role="button" tabindex="0" aria-label="${d.getMonth() + 1}월 ${d.getDate()}일 일정 ${here.length}개">
+          <span class="mcal__n">${d.getDate()}</span>
+          ${shown.map((p) => {
+            if (!p) return '<span class="ev ev--gap"></span>';
+            const first = p.s === i, last = p.en === i;
+            const cls = `ev ev-${evTone(p.e)}${p.en > p.s ? ' ev--multi' : ''}${first && !p.contL ? ' ev--l' : ''}${last && !p.contR ? ' ev--r' : ''}`;
+            const label = first || i === 0 ? esc(p.e.title) : '&nbsp;';
+            return `<button type="button" class="${cls}" data-ev="${esc(p.e.id)}" title="${esc(p.e.title)}">${label}</button>`;
+          }).join('')}
+          ${more ? `<span class="ev-more">+${more}</span>` : ''}
+          ${here.length ? `<span class="mcal__dots">${here.slice(0, 4).map((p) => `<i class="ev-${evTone(p.e)}"></i>`).join('')}</span>` : ''}
+        </div>`;
+      });
+      html += `</div>`;
+    }
+    return html;
+  }
+
+  // 아래 목록 (휴대폰에서 주로 보는 곳): 날짜별로 묶음
+  function agenda(month, events, selected) {
+    const from = `${month}-01`;
+    const [y, mo] = month.split('-').map(Number);
+    const to = ymd(new Date(y, mo, 0));
+    const byDay = new Map();
+    for (const e of events) {
+      // 여러 날 일정은 시작하는 날(또는 이 달 첫날)에 한 번만
+      const k = e.start < from ? from : e.start;
+      if (k > to) continue;
+      if (selected && !(e.start <= selected && (e.end || e.start) >= selected)) continue;
+      const key = selected || k;
+      if (!byDay.has(key)) byDay.set(key, []);
+      byDay.get(key).push(e);
+    }
+    const days = [...byDay.keys()].sort();
+    const todayK = ymd(new Date());
+    const head = `<div class="agenda__head"><h2>${selected ? `${Number(selected.slice(8))}일 일정` : '이달 일정'}</h2>${selected ? '<button type="button" class="link-btn" id="agendaAll">이달 전체 보기</button>' : ''}</div>`;
+    if (!days.length) return head + emptyState({ ic: 'calendar', title: selected ? '이 날은 일정이 없어요' : '이 달엔 보이는 일정이 없어요', desc: selected ? '' : '위에서 거르기 칩을 확인해 보세요' });
+    return head + days.map((k) => {
+      const d = parseDate(k);
+      return `<div class="agenda__day${k === todayK ? ' is-today' : ''}">
+        <div class="agenda__date"><b>${d.getDate()}</b><small>${WEEK[d.getDay()]}요일</small></div>
+        <div class="agenda__list">${byDay.get(k).map((e) => `
+          <button type="button" class="aev" data-ev="${esc(e.id)}">
+            <i class="aev__bar ev-${evTone(e)}"></i>
+            <span class="aev__body"><b>${esc(e.title)}</b><small>${esc([evWhen(e), e.place].filter(Boolean).join(' · '))}</small></span>
+            <span class="aev__tag ev-${evTone(e)}">${esc(evLabel(e))}</span>
+          </button>`).join('')}</div>
+      </div>`;
+    }).join('');
+  }
+
+  // 일정 하나 보기 (바텀시트)
+  async function openEvent(e, perms, month) {
+    if (!e) return;
+    const can = e.scope === 'dept' ? perms.editDepts.includes(e.dept) : perms.editShared;
+    const sh = openSheet({
+      title: e.title,
+      body: `<div class="evd">
+        <span class="aev__tag ev-${evTone(e)}">${esc(evLabel(e))}</span>
+        <p>${icon('calendar')}${esc(evWhen(e))}</p>
+        ${e.place ? `<p>${icon('pin')}${esc(e.place)}</p>` : ''}
+        ${e.note ? `<p class="evd__note">${esc(e.note)}</p>` : ''}
+      </div>`,
+      actions: can ? [{ label: '지우기', value: 'del', kind: 'danger' }, { label: '고치기', value: 'edit', kind: 'primary' }] : [{ label: '닫기', value: null }],
+    });
+    const v = await sh.result;
+    if (v === 'edit') editEvent(e, perms, month);
+    if (v === 'del') {
+      if (!(await confirmSheet('일정을 지울까요?', `"${esc(e.title)}" 일정을 지우면 되돌릴 수 없어요.`, '지우기', 'danger'))) return;
+      const r = await callApi('cal_delete', { event: { id: e.id, start: e.start, scope: e.scope, dept: e.dept } });
+      if (r.status !== 'ok') return toast(`지우지 못했어요: ${errText(r)}`, { tone: 'error' });
+      calCache.clear(); toast('일정을 지웠어요'); viewCalendar();
+    }
+  }
+
+  // 일정 추가·고치기
+  function scopeOptions(perms, cur) {
+    const opts = [];
+    if (perms.editShared) opts.push(['youth', '청년회'], ['church', '교회 전체']);
+    perms.editDepts.forEach((d) => opts.push([`dept:${d}`, d]));
+    return opts.map(([v, l]) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(l)}</option>`).join('');
+  }
+  const scopeValue = (e) => (e.scope === 'dept' ? `dept:${e.dept}` : e.scope);
+  const splitScope = (v) => (v.startsWith('dept:') ? { scope: 'dept', dept: v.slice(5) } : { scope: v, dept: '' });
+  async function editEvent(e, perms, month) {
+    const today = ymd(new Date());
+    const def = e || { scope: perms.editShared ? 'youth' : 'dept', dept: perms.editDepts[0] || '', start: today.startsWith(month) ? today : `${month}-01`, end: '', time: '', place: '', note: '', title: '' };
+    const sh = openSheet({
+      title: e ? '일정 고치기' : '일정 추가',
+      body: `<form class="evform" id="evForm" novalidate>
+        <label class="field"><span class="field__label">구분</span><select class="select" name="scope">${scopeOptions(perms, scopeValue(def))}</select></label>
+        <label class="field"><span class="field__label">제목</span><input class="input" name="title" value="${esc(def.title)}" maxlength="80" placeholder="예: 청년회 전체교제"></label>
+        <div class="grid-2">
+          <label class="field"><span class="field__label">시작일</span><input class="input" type="date" name="start" value="${esc(def.start)}"></label>
+          <label class="field"><span class="field__label">끝나는 날 <small class="muted">(하루면 비움)</small></span><input class="input" type="date" name="end" value="${esc(def.end && def.end !== def.start ? def.end : '')}"></label>
+        </div>
+        <div class="grid-2">
+          <label class="field"><span class="field__label">시간</span><input class="input" name="time" value="${esc(def.time)}" maxlength="30" placeholder="예: 오후 4시"></label>
+          <label class="field"><span class="field__label">장소</span><input class="input" name="place" value="${esc(def.place)}" maxlength="40" placeholder="예: 청년회실"></label>
+        </div>
+        <label class="field"><span class="field__label">메모</span><textarea class="textarea" name="note" rows="2" maxlength="300" placeholder="강사, 준비물 등">${esc(def.note)}</textarea></label>
+        <p class="inline-error" id="evErr" role="alert" hidden></p>
+      </form>`,
+      actions: [{ label: '취소', value: null }, { label: '저장', value: 'save', kind: 'primary' }],
+    });
+    const form = sh.el.querySelector('#evForm');
+    form.title.focus();
+    // 저장 버튼을 눌러도 바로 닫히지 않게 가로채기
+    const saveBtn = sh.el.querySelector('.btn--primary');
+    saveBtn.onclick = async (ev) => {
+      ev.stopPropagation();
+      const err = sh.el.querySelector('#evErr');
+      const fd = new FormData(form);
+      const ev2 = {
+        ...(e ? { id: e.id } : {}), ...splitScope(String(fd.get('scope') || '')),
+        title: String(fd.get('title') || '').trim(), start: String(fd.get('start') || ''), end: String(fd.get('end') || ''),
+        time: String(fd.get('time') || ''), place: String(fd.get('place') || ''), note: String(fd.get('note') || ''),
+      };
+      if (!ev2.title) { err.innerHTML = `${icon('alert')}제목을 적어 주세요`; err.hidden = false; form.title.focus(); return; }
+      if (!ev2.start) { err.innerHTML = `${icon('alert')}날짜를 골라 주세요`; err.hidden = false; return; }
+      if (ev2.end && ev2.end < ev2.start) { err.innerHTML = `${icon('alert')}끝나는 날이 시작일보다 빨라요`; err.hidden = false; return; }
+      saveBtn.disabled = true; saveBtn.innerHTML = `${spinner}저장 중`;
+      const r = await callApi('cal_save', { event: ev2, ...(e ? { orig: { start: e.start, scope: e.scope, dept: e.dept } } : {}) });
+      if (r.status !== 'ok') { saveBtn.disabled = false; saveBtn.textContent = '저장'; err.innerHTML = `${icon('alert')}${esc(errText(r))}`; err.hidden = false; return; }
+      sh.close();
+      calCache.clear();
+      state.calView = ev2.start.slice(0, 7);
+      toast(e ? '일정을 고쳤어요' : '일정을 추가했어요');
+      viewCalendar();
+    };
+  }
+
+  // 여러 개 한 번에: "11/14 청년회 전체교제 (김반석 전도사)" "11/2~8 대전도집회"
+  function parseBulk(text, year) {
+    const out = [], bad = [];
+    for (const raw of String(text).split('\n')) {
+      const l = raw.trim();
+      if (!l) continue;
+      const m = l.match(/^(\d{1,2})[./월]\s*(\d{1,2})일?\s*(?:[~\-–]\s*(?:(\d{1,2})[./월]\s*)?(\d{1,2})일?)?\s+(.+)$/);
+      if (!m) { bad.push(l); continue; }
+      const [, m1, d1, m2, d2, rest] = m;
+      const start = `${year}-${pad(m1)}-${pad(d1)}`;
+      let end = '';
+      if (d2) end = `${Number(m2 || m1) < Number(m1) ? year + 1 : year}-${pad(m2 || m1)}-${pad(d2)}`;
+      const tm = rest.match(/\s*[[(]?\s*((?:오전|오후|저녁|아침)\s*\d{1,2}시(?:\s*\d{1,2}분)?|\d{1,2}:\d{2})\s*[\])]?\s*$/);
+      out.push({ start, end, title: (tm ? rest.slice(0, tm.index) : rest).trim(), time: tm ? tm[1] : '' });
+    }
+    return { out, bad };
+  }
+  function bulkEvents(perms, month) {
+    const year = Number(month.slice(0, 4));
+    const sh = openSheet({
+      title: '여러 개 붙여넣기',
+      body: `<p class="sheet__text">한 줄에 일정 하나씩. 날짜로 시작하면 돼요.</p>
+        <pre class="bulk-ex">11/14 청년회 전체교제 (김반석 전도사)
+11/2~8 대전도집회 / 강사: 오세일 목사
+11/23~27 청년 부서연합 전도집회</pre>
+        <label class="field"><span class="field__label">구분 (이 목록 전체)</span><select class="select" id="bScope">${scopeOptions(perms, perms.editShared ? 'youth' : `dept:${perms.editDepts[0]}`)}</select></label>
+        <textarea class="textarea" id="bText" rows="8" placeholder="11/14 청년회 전체교제"></textarea>
+        <div id="bPrev" class="bulk-prev"></div>`,
+      actions: [{ label: '취소', value: null }, { label: '저장', value: 'save', kind: 'primary' }],
+    });
+    const $t = sh.el.querySelector('#bText');
+    const $p = sh.el.querySelector('#bPrev');
+    const saveBtn = sh.el.querySelector('.btn--primary');
+    const preview = () => {
+      const { out, bad } = parseBulk($t.value, year);
+      $p.innerHTML = (out.length ? `<b>${out.length}개 일정</b><ul>${out.map((e) => `<li><span>${esc(e.start.slice(5).replace('-', '/'))}${e.end ? `~${esc(e.end.slice(5).replace('-', '/'))}` : ''}</span>${esc(e.title)}${e.time ? ` <small>${esc(e.time)}</small>` : ''}</li>`).join('')}</ul>` : '')
+        + (bad.length ? `<p class="inline-error">${icon('alert')}날짜를 못 읽은 줄 ${bad.length}개: ${esc(bad.slice(0, 2).join(' / '))}</p>` : '');
+      saveBtn.disabled = !out.length;
+      return out;
+    };
+    $t.addEventListener('input', preview);
+    preview();
+    $t.focus();
+    saveBtn.onclick = async (ev) => {
+      ev.stopPropagation();
+      const list = preview();
+      if (!list.length) return;
+      const sc = splitScope(sh.el.querySelector('#bScope').value);
+      saveBtn.disabled = true; saveBtn.innerHTML = `${spinner}저장 중`;
+      const r = await callApi('cal_bulk', { events: list.map((e) => ({ ...e, ...sc })) });
+      if (r.status !== 'ok') { saveBtn.disabled = false; saveBtn.textContent = '저장'; toast(`저장하지 못했어요: ${errText(r)}`, { tone: 'error' }); return; }
+      sh.close(); calCache.clear(); toast(`일정 ${list.length}개를 추가했어요`); viewCalendar();
+    };
+  }
+
+  // 이달 정보 (최고 관리자): 주제 · 안내 메모 · 월정표 원본 그림
+  function editMonthMeta(month, meta) {
+    const [y, mo] = month.split('-').map(Number);
+    const sh = openSheet({
+      title: `${y}년 ${mo}월 정보`,
+      body: `<label class="field"><span class="field__label">주제</span><input class="input" id="mTheme" value="${esc(meta.theme || '')}" maxlength="80" placeholder="예: 상급, 영원한 영광"></label>
+        <label class="field"><span class="field__label">이달 안내 <small class="muted">(부서별 배정, 봉사 순서 등)</small></span><textarea class="textarea" id="mMemo" rows="6" maxlength="3000" placeholder="믿음부 · 은장회실 · 대강당 청소&#10;11/1 봉사: 충성부(형제) 겸손부(자매)">${esc(meta.memo || '')}</textarea></label>
+        <div class="field"><span class="field__label">월정표 원본 그림</span>
+          <div class="btn-row"><button type="button" class="btn btn--sm" id="mImg">${icon('image')}${meta.image ? '그림 바꾸기' : '그림 올리기'}</button>${meta.image ? `<button type="button" class="btn btn--ghost btn--sm" id="mImgDel">${icon('trash')}지우기</button>` : ''}</div>
+          <input type="file" id="mFile" accept="image/*" hidden></div>`,
+      actions: [{ label: '취소', value: null }, { label: '저장', value: 'save', kind: 'primary' }],
+    });
+    const $f = sh.el.querySelector('#mFile');
+    sh.el.querySelector('#mImg').onclick = () => $f.click();
+    $f.onchange = async () => {
+      const file = $f.files[0];
+      if (!file) return;
+      const b = sh.el.querySelector('#mImg');
+      b.disabled = true; b.innerHTML = `${spinner}올리는 중`;
+      const small = await shrink(file, 2000, 0.88);
+      const fd = new FormData();
+      fd.append('api', 'cal_img_put'); fd.append('hash', auth.hash); fd.append('month', month); fd.append('file', small.blob, 'month.jpg');
+      const r = await send(fd);
+      b.disabled = false; b.innerHTML = `${icon('image')}그림 바꾸기`;
+      if (r.status !== 'ok') return toast(`그림을 올리지 못했어요: ${errText(r)}`, { tone: 'error' });
+      monthImages.delete(month); calCache.delete(month);
+      toast('월정표 그림을 올렸어요');
+    };
+    sh.el.querySelector('#mImgDel')?.addEventListener('click', async () => {
+      const r = await callApi('cal_img_del', { month });
+      if (r.status !== 'ok') return toast(`지우지 못했어요: ${errText(r)}`, { tone: 'error' });
+      monthImages.delete(month); calCache.delete(month); toast('그림을 지웠어요'); sh.close(); viewCalendar();
+    });
+    sh.el.querySelector('.btn--primary').onclick = async (ev) => {
+      ev.stopPropagation();
+      const r = await callApi('cal_meta_save', { month, theme: sh.el.querySelector('#mTheme').value, memo: sh.el.querySelector('#mMemo').value });
+      if (r.status !== 'ok') return toast(`저장하지 못했어요: ${errText(r)}`, { tone: 'error' });
+      sh.close(); calCache.delete(month); toast('저장했어요'); viewCalendar();
+    };
+  }
+
+  // 월정표 원본 그림 보기 (로그인 확인 후 받아서 크게 보기)
+  const monthImages = new Map();
+  async function showMonthImage(month) {
+    let url = monthImages.get(month);
+    if (!url) {
+      try {
+        const res = await fetch('/api/jbch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api: 'cal_img_get', params: { hash: auth.hash, month } }) });
+        if (!(res.headers.get('Content-Type') || '').startsWith('image/')) return toast('그림을 불러오지 못했어요', { tone: 'error' });
+        url = URL.createObjectURL(await res.blob());
+        monthImages.set(month, url);
+      } catch { return toast('그림을 불러오지 못했어요', { tone: 'error' }); }
+    }
+    lightbox([url], 0);
+  }
+
+  // 홈에 보여줄 다가오는 일정 (오늘부터 3개)
+  async function upcoming(n = 3) {
+    const today = ymd(new Date());
+    const m = today.slice(0, 7);
+    const rs = await Promise.all([loadMonth(m), loadMonth(addMonth(m, 1))]);
+    if (rs[0].status !== 'ok') return null;
+    const f = calFilter();
+    const seen = new Set();
+    return rs.flatMap((r) => r.events || []).filter((e) => {
+      if (seen.has(e.id)) return false;
+      seen.add(e.id);
+      return (e.end || e.start) >= today && passFilter(e, f);
+    }).sort((a, b) => a.start.localeCompare(b.start)).slice(0, n);
+  }
+
+  /* ═══ 화면: 관리 (최고 관리자) — 부서 · 부서 관리자 · 명단 ═══ */
+  async function viewAdmin() {
+    if (!isAdmin()) return viewAdminOnly('관리');
+    $app.innerHTML = `${pageHead('관리', '부서와 부서 관리자, 부서 명단을 정해요')}${skeletonCards(2)}`;
+    const r = await callApi('cal_config_get');
+    if (!document.querySelector('.page-head')) return;
+    if (r.status !== 'ok') { $app.innerHTML = pageHead('관리') + emptyState({ ic: 'alert', title: '설정을 불러오지 못했어요', desc: esc(errText(r)) }); return; }
+    const cfg = r.result || {};
+    let depts = cfg.depts?.length ? cfg.depts : Object.keys(cfg.rosters || {});
+    if (!depts.length) depts = ['믿음부', '소망부', '사랑부', '진리부', '충성부', '겸손부', '순종부'];
+    $app.innerHTML = `
+      ${pageHead('관리', '부서와 부서 관리자, 부서 명단을 정해요')}
+      <section class="card wsec">
+        <h2 class="wsec__title">부서 목록</h2>
+        <p class="hint">쉼표로 구분해요. 순서대로 보여요.</p>
+        <input class="input" id="aDepts" value="${esc(depts.join(', '))}">
+      </section>
+      <div id="aDeptCards" class="admin-depts"></div>
+      <div class="actionbar"><button type="button" class="btn btn--primary btn--lg" id="aSave">${icon('check')}저장</button></div>`;
+    const draw = () => {
+      const list = document.getElementById('aDepts').value.split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
+      const keep = {};
+      document.querySelectorAll('[data-dept]').forEach((c) => { keep[c.dataset.dept] = { a: c.querySelector('.aAdm').value, r: c.querySelector('.aRos').value }; });
+      document.getElementById('aDeptCards').innerHTML = list.map((d) => {
+        const admins = keep[d]?.a ?? (cfg.deptAdmins?.[d] || []).join(', ');
+        const ros = keep[d]?.r ?? (cfg.rosters?.[d] || []).join('\n');
+        const n = ros.split('\n').filter((s) => s.trim()).length;
+        return `<section class="card wsec" data-dept="${esc(d)}">
+          <h2 class="wsec__title"><i class="ddot t-${tone(d)}"></i>${esc(d)} <small>${n}명</small></h2>
+          <label class="field"><span class="field__label">부서 관리자 깨사모 아이디 <small class="muted">(쉼표로 구분 · 이 사람들이 부서 일정을 올려요)</small></span><input class="input aAdm" value="${esc(admins)}" placeholder="예: hong123, kim456"></label>
+          <label class="field"><span class="field__label">부서 명단 <small class="muted">(한 줄에 한 명 · 깨사모 이름과 같게 · 이 사람들이 부서 일정을 봐요)</small></span><textarea class="textarea aRos" rows="5" placeholder="김민수b&#10;이다정s">${esc(ros)}</textarea></label>
+        </section>`;
+      }).join('');
+    };
+    draw();
+    document.getElementById('aDepts').addEventListener('change', draw);
+    document.getElementById('aSave').onclick = async (e) => {
+      const b = e.currentTarget;
+      const list = document.getElementById('aDepts').value.split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
+      const deptAdmins = {}, rost = {};
+      document.querySelectorAll('[data-dept]').forEach((c) => {
+        deptAdmins[c.dataset.dept] = c.querySelector('.aAdm').value.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
+        rost[c.dataset.dept] = c.querySelector('.aRos').value.split('\n').map((s) => s.trim()).filter(Boolean);
+      });
+      b.disabled = true; b.innerHTML = `${spinner}저장 중`;
+      const r2 = await callApi('cal_config_save', { depts: list, deptAdmins, rosters: rost });
+      b.disabled = false; b.innerHTML = `${icon('check')}저장`;
+      if (r2.status !== 'ok') return toast(`저장하지 못했어요: ${errText(r2)}`, { tone: 'error' });
+      state.rosters = null; calCache.clear();
+      toast('저장했어요');
+    };
+  }
+
   /* ─── 관리자 (Cloudflare 환경 변수 ADMINS 에 아이디가 있는 사람) ─── */
   const isAdmin = () => !!(auth.hash && auth.me?.admin);
-  function viewAdminOnly() {
-    $app.innerHTML = pageHead('참석 흐름') + emptyState({ ic: 'lock', title: '관리자만 볼 수 있어요', desc: '청년회 관리자에게 권한을 받으면 볼 수 있어요' });
+  function viewAdminOnly(title = '참석 흐름') {
+    $app.innerHTML = pageHead(title) + emptyState({ ic: 'lock', title: '관리자만 볼 수 있어요', desc: '청년회 관리자에게 권한을 받으면 볼 수 있어요' });
   }
 
   /* ─── 틀: 위쪽 바 · 왼쪽 메뉴 · 아래 탭 ─── */
   const NAV = () => [
     ['list', '#/', '홈', 'book'],
-    ['prayers', '#/prayers', '기도제목', 'heart'],
+    ['calendar', '#/calendar', '일정', 'calendar'],
     ['write', '#/write', '쓰기', 'pen'],
-    ...(isAdmin() ? [['attendance', '#/attendance', '참석 흐름', 'chart']] : []),
+    ['prayers', '#/prayers', '기도제목', 'heart'],
+    ...(isAdmin() ? [['attendance', '#/attendance', '참석 흐름', 'chart'], ['admin', '#/admin', '관리', 'users']] : []),
     ['settings', '#/settings', '내 정보', 'user'],
   ];
   const brandMark = '<span class="mark" aria-hidden="true"></span>';
@@ -1388,7 +1883,7 @@
     const me = auth.me;
     const n = newCount();
     const badge = (k) => (k === 'list' && n ? `<span class="badge" aria-label="새 글 ${n}개">${n > 99 ? '99+' : n}</span>` : '');
-    document.title = tab === 'list' ? APP : `${({ prayers: '기도제목', write: '교제록 쓰기', attendance: '참석 흐름', settings: '내 정보' })[tab] || '교제록'} · ${APP}`;
+    document.title = tab === 'list' ? APP : `${({ prayers: '기도제목', write: '교제록 쓰기', attendance: '참석 흐름', settings: '내 정보', calendar: '일정', admin: '관리' })[tab] || '교제록'} · ${APP}`;
     const $top = document.getElementById('topbar');
     if (!document.getElementById('gq')) $top.innerHTML = `
       <a class="brand" href="#/">${brandMark}<span>${esc(APP)}</span></a>
@@ -1412,7 +1907,8 @@
         <a class="nav-sub" href="${esc(C.board.siteUrl)}" target="_blank" rel="noopener">${icon('external')}<span>교회 사이트 교제실</span></a>
       </div>
       <a class="side__me" href="#/settings">${avatar(me?.name, '', 'sm')}<span><b>${esc(me?.name || '')}</b><small>${esc(me?.church || '')}</small></span>${icon('right', 'ic--end')}</a>`;
-    document.getElementById('tabbar').innerHTML = items.map(([k, href, label, ic]) =>
+    // 휴대폰 아래 탭은 다섯 개만 (참석 흐름·관리는 내 정보에서)
+    document.getElementById('tabbar').innerHTML = items.filter(([k]) => k !== 'attendance' && k !== 'admin').map(([k, href, label, ic]) =>
       `<a href="${href}"${k === tab ? ' aria-current="page"' : ''}${k === 'write' ? ' id="writeTab"' : ''}>${icon(ic)}<span>${label}</span>${k === 'list' && n ? '<i class="dotbadge" aria-hidden="true"></i>' : ''}</a>`).join('');
     renderSideDepts();
   }
@@ -1542,6 +2038,7 @@
   /* ─── 로그인 화면 (로그인해야 들어갈 수 있음) ─── */
   function signOut() {
     auth.clear();
+    calCache.clear();
     state.posts = null; state.loading = null; state.rosters = null; state.schedule = null;
     document.getElementById('panel').innerHTML = '';
   }
@@ -1641,6 +2138,8 @@
     if (name === 'attendance') return isAdmin() ? viewAttendance() : viewAdminOnly();
     if (name === 'write') return viewWrite();
     if (name === 'settings') return viewSettings();
+    if (name === 'calendar') return viewCalendar();
+    if (name === 'admin') return viewAdmin();
     return viewList({ restore });
   }
   window.addEventListener('hashchange', route);

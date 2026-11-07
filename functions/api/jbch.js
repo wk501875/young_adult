@@ -5,6 +5,8 @@
 
 const BASE = 'https://api.jbch.org';
 const DEV_NAME = 'teach_bible';
+// api.jbch.org 는 User-Agent 가 없는 요청을 417 로 막습니다 (Cloudflare 서버는 기본으로 안 붙임)
+const UA = 'young_adult/1.0 (Cloudflare Pages)';
 
 // 글쓰기·사진 올리기를 허락한 게시판 (청년회교제실)
 const WRITE_BOARDS = ['2122'];
@@ -40,7 +42,7 @@ function cleanParams(params) {
 async function relay(path, init) {
   let res;
   try {
-    res = await fetch(BASE + path, { method: 'POST', ...init });
+    res = await fetch(BASE + path, { method: 'POST', ...init, headers: { 'User-Agent': UA, ...(init.headers || {}) } });
   } catch {
     return { status: 'error', result: 'API 서버에 연결하지 못했습니다' };
   }
@@ -60,7 +62,7 @@ async function login(env, p) {
   try {
     res = await fetch(BASE + APIS.login.path, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'User-Agent': UA },
       body: JSON.stringify({
         dev_name: DEV_NAME, tokenId: env.JBCH_TOKEN,
         Userid: p.Userid, password: p.password, device: 'Web', output: '1',

@@ -2221,8 +2221,22 @@
     if (r.result.length < 24) s.done = true;
     return s;
   }
+  // 새 앨범 표시: 지난번 앨범 탭을 본 뒤에 올라온 글 (처음 쓰는 기기에선 표시 안 함)
+  const albumSeenPrev = store.get('albumSeenAt', 0);
+  if (!albumSeenPrev) store.set('albumSeenAt', Date.now()); // 처음 쓰는 기기: 지금부터 올라오는 걸 새 글로
+  let albumViewed = false;
+  const isNewAlbum = (a) => albumSeenPrev && a.date && a.date.getTime() > albumSeenPrev;
+  let albumChecked = false;
+  async function checkNewAlbums() {
+    if (albumChecked || !ALBUMS.length) return;
+    albumChecked = true;
+    const all = await Promise.all(ALBUMS.map((b) => loadAlbums(b.boardId)));
+    if (albumViewed) return; // 그사이 앨범 탭을 봤으면 끝
+    state.albumNew = all.flatMap((s) => s.items).filter(isNewAlbum).length;
+    if (state.albumNew && auth.hash) renderChrome(chromeTab);
+  }
   const albumCard = (a) => `<a class="alb" href="#/album/${encodeURIComponent(a.id)}">
-      <span class="alb__pic">${a.cover ? `<img src="${esc(thumbOf(a.cover))}" alt="" loading="lazy" decoding="async" onload="this.classList.add('loaded')" onerror="this.remove()">` : ''}</span>
+      <span class="alb__pic">${a.cover ? `<img src="${esc(thumbOf(a.cover))}" alt="" loading="lazy" decoding="async" onload="this.classList.add('loaded')" onerror="this.remove()">` : ''}${isNewAlbum(a) ? '<span class="tag tag--new alb__new">새 글</span>' : ''}</span>
       <span class="alb__txt"><b>${esc(a.title)}</b><small>${a.date ? `${a.date.getFullYear()}. ${a.date.getMonth() + 1}. ${a.date.getDate()}.` : ''}${a.comments ? ` · ${icon('msg')}${a.comments}` : ''}</small></span>
     </a>`;
   async function viewAlbums() {
@@ -2233,6 +2247,10 @@
       <div id="albList"><div class="albs">${Array.from({ length: 6 }, () => '<span class="alb alb--sk"><span class="alb__pic sk"></span><span class="sk sk-line"></span></span>').join('')}</div></div>`;
     document.getElementById('albTabs')?.addEventListener('click', (e) => { const b = e.target.closest('[data-b]'); if (b) { albumTab = b.dataset.b; viewAlbums(); } });
     const board = albumTab;
+    // 앨범 탭을 봤으니 새 글 표시는 지움 (이번에 보는 목록의 '새 글' 딱지는 그대로)
+    store.set('albumSeenAt', Date.now());
+    albumChecked = true; albumViewed = true;
+    if (state.albumNew) { state.albumNew = 0; renderChrome('album'); }
     const s = await loadAlbums(board);
     const draw = () => {
       const $l = document.getElementById('albList');
@@ -2296,11 +2314,14 @@
   ];
   const brandMark = '<span class="mark" aria-hidden="true"></span>';
   const newCount = () => (state.posts || []).filter(isNew).length;
+  let chromeTab = 'list';
   function renderChrome(tab) {
+    chromeTab = tab;
     const items = NAV();
     const me = auth.me;
     const n = newCount();
-    const badge = (k) => (k === 'list' && n ? `<span class="badge" aria-label="새 글 ${n}개">${n > 99 ? '99+' : n}</span>` : '');
+    const counts = { list: n, album: state.albumNew || 0 };
+    const badge = (k) => (counts[k] ? `<span class="badge" aria-label="새 글 ${counts[k]}개">${counts[k] > 99 ? '99+' : counts[k]}</span>` : '');
     document.title = tab === 'list' ? APP : `${({ prayers: '기도제목', write: '교제록 쓰기', attendance: '참석 흐름', settings: '내 정보', calendar: '일정', admin: '관리', meetup: '번개', album: '앨범' })[tab] || '교제록'} · ${APP}`;
     const $top = document.getElementById('topbar');
     if (!document.getElementById('gq')) $top.innerHTML = `
@@ -2327,7 +2348,7 @@
       <a class="side__me" href="#/settings">${avatar(me?.name, '', 'sm')}<span><b>${esc(me?.name || '')}</b><small>${esc(me?.church || '')}</small></span>${icon('right', 'ic--end')}</a>`;
     // 휴대폰 아래 탭은 다섯 개만 (쓰기는 홈의 쓰기 칸, 참석 흐름·관리는 내 정보에서)
     document.getElementById('tabbar').innerHTML = items.filter(([k]) => !['attendance', 'admin', 'write'].includes(k)).map(([k, href, label, ic]) =>
-      `<a href="${href}"${k === tab ? ' aria-current="page"' : ''}${k === 'write' ? ' id="writeTab"' : ''}>${icon(ic)}<span>${label}</span>${k === 'list' && n ? '<i class="dotbadge" aria-hidden="true"></i>' : ''}</a>`).join('');
+      `<a href="${href}"${k === tab ? ' aria-current="page"' : ''}${k === 'write' ? ' id="writeTab"' : ''}>${icon(ic)}<span>${label}</span>${counts[k] ? '<i class="dotbadge" aria-hidden="true"></i>' : ''}</a>`).join('');
     renderSideDepts();
   }
   // 왼쪽 메뉴의 "부서" 묶음 (접었다 펼 수 있음)
@@ -2545,7 +2566,26 @@
 
   /* ─── 라우터 ─── */
   let prevName = null;
+  /* 화면 전환: 탭끼리는 페이드 스루, 글·앨범·번개로 들어갈 땐 푸시(오른쪽에서), 나올 땐 반대로.
+   * 바뀌는 건 가운데(#app)만 — 위쪽 바·메뉴·아래 탭은 그대로. 지원 안 되는 브라우저·동작 줄이기 설정이면 그냥 바뀜 */
+  let vtTop = null, vtDepth = 0;
   function route() {
+    const [name, ...rest] = location.hash.replace(/^#\/?/, '').split('/');
+    const top = name || 'list';
+    const depth = name === 'post' || rest.length ? 1 : 0;
+    let kind = '';
+    if (auth.hash && vtTop !== null) {
+      if (depth > vtDepth) kind = 'push';
+      else if (depth < vtDepth) kind = 'pop';
+      else if (top !== vtTop || depth === 1) kind = 'fade';
+    }
+    vtTop = auth.hash ? top : null; vtDepth = depth;
+    if (!kind || !document.startViewTransition || reduceMotion()) return renderRoute();
+    document.documentElement.dataset.vt = kind;
+    const t = document.startViewTransition(() => { renderRoute(); });
+    t.finished.finally(() => { delete document.documentElement.dataset.vt; });
+  }
+  function renderRoute() {
     const locked = !auth.hash;
     document.body.classList.toggle('locked', locked);
     if (locked) { prevName = null; window.scrollTo(0, 0); document.title = APP; return viewLogin(); }
@@ -2557,6 +2597,7 @@
     prevName = name || 'list';
     renderChrome(tab === 'post' ? 'list' : tab);
     loadPosts().then(() => { if (auth.hash) renderChrome(tab === 'post' ? 'list' : tab); });
+    if (name !== 'album') checkNewAlbums();
     document.title = tab === 'list' ? APP : document.title;
     window.scrollTo(0, 0);
     renderPanel();

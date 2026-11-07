@@ -195,6 +195,9 @@ mark { background: color-mix(in srgb, var(--accent) 28%, transparent); color: in
   background-size: 200% 100%; animation: shimmer 1.2s infinite linear;
 }
 @keyframes shimmer { to { background-position: -200% 0; } }
+.loading-label { font-size: 14px; color: var(--text-3); margin: 0 0 10px; font-variant-numeric: tabular-nums; }
+.more { display: flex; justify-content: center; margin-top: 18px; }
+.more:empty { display: none; }
 
 /* ─── 상세 ───────────────────────────────── */
 .back { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; color: var(--text-2); font-weight: 600; margin-bottom: 12px; }
@@ -213,7 +216,17 @@ mark { background: color-mix(in srgb, var(--accent) 28%, transparent); color: in
 .prayer-list li { background: var(--surface-2); border-radius: 12px; padding: 10px 14px; }
 .prayer-list b { display: block; font-size: 13px; color: var(--text-2); }
 .raw-html { line-height: 1.8; }
+.raw-html p { margin: 0; }
 .raw-html img { border-radius: 12px; height: auto; }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+.gallery a { display: block; border-radius: 12px; overflow: hidden; background: var(--surface-2); aspect-ratio: 4 / 3; }
+.gallery img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.comment-list { list-style: none; margin: 0; padding: 0; }
+.comment-list li { padding: 10px 0; border-top: 1px solid var(--line); }
+.comment-list li:first-child { border-top: 0; padding-top: 2px; }
+.comment-head { display: flex; align-items: baseline; gap: 4px; font-size: 14px; }
+.comment-head time { margin-left: auto; font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.comment-list p { margin: 2px 0 0; font-size: 15px; white-space: pre-line; }
 
 /* ─── 기도제목 ───────────────────────────── */
 .prayer-group { margin-bottom: 18px; }
@@ -280,6 +293,13 @@ mark { background: color-mix(in srgb, var(--accent) 28%, transparent); color: in
 .steps li + li { margin-top: 4px; }
 
 /* ─── 설정 ───────────────────────────────── */
+.login-on { display: flex; align-items: center; gap: 12px; }
+.avatar {
+  width: 44px; height: 44px; border-radius: 50%; flex: none;
+  display: grid; place-items: center; background: var(--brand-soft); color: var(--brand);
+  font-weight: 800; font-size: 18px;
+}
+.btn:disabled { opacity: .6; cursor: default; }
 pre.json {
   background: var(--surface-2); border-radius: 12px; padding: 12px; font-size: 12.5px; line-height: 1.5;
   overflow: auto; max-height: 360px; white-space: pre-wrap; word-break: break-all;

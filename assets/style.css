@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════
  * 일산교회 청년회 — 디자인
- * 방향: 사진이 주인공인 커뮤니티 앱 — 레몬 색 조합(모래 #F2E1B5 · 하늘 #C5D9DE · 세이지 #A1B9B0 · 레몬 #E4B922), 둥근 글꼴, 흰 테두리 사진, 큰 제목
+ * 방향: 사진이 주인공인 커뮤니티 앱 — 레몬 색 조합(모래 #F2E1B5 · 하늘 #C5D9DE · 세이지 #A1B9B0 · 레몬 #E4B922), Pretendard 글꼴, 흰 테두리 사진, 큰 제목
  * ═══════════════════════════════════════════════ */
 :root {
   --bg: #f6eedb;
@@ -45,7 +45,7 @@
   --r: 12px;
   --top: 68px;
   --ease: cubic-bezier(.2, .8, .2, 1);
-  --font: 'NanumSquareRound', 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+  --font: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
   color-scheme: light;
 }
 :root[data-theme="dark"] {
@@ -1111,11 +1111,6 @@ button.evt { width: calc(100% + 16px); border: 0; background: none; font: inheri
 @media (max-width: 560px) { .post__go { display: none !important; } }
 @media (min-width: 861px) { .post--photo .post__cover { aspect-ratio: 16 / 10; } }
 
-/* ═══ 둥근 글꼴: 나눔스퀘어라운드 (네이버 한글 글꼴 공식 주소) ═══ */
-@font-face { font-family: 'NanumSquareRound'; font-weight: 300; font-display: swap; src: url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundL.woff2) format('woff2'), url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundL.woff) format('woff'); }
-@font-face { font-family: 'NanumSquareRound'; font-weight: 400 500; font-display: swap; src: url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundR.woff2) format('woff2'), url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundR.woff) format('woff'); }
-@font-face { font-family: 'NanumSquareRound'; font-weight: 600 700; font-display: swap; src: url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundB.woff2) format('woff2'), url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundB.woff) format('woff'); }
-@font-face { font-family: 'NanumSquareRound'; font-weight: 800 900; font-display: swap; src: url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundEB.woff2) format('woff2'), url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundEB.woff) format('woff'); }
 
 /* ═══ 레몬 포인트: 주요 버튼 · 오늘 · 새 글 ═══ */
 .btn--primary { background: var(--lemon); border-color: var(--lemon); color: var(--lemon-ink); }
@@ -1124,5 +1119,3 @@ button.evt { width: calc(100% + 16px); border: 0; background: none; font: inheri
 .cal__d.is-today { background: var(--lemon); color: var(--lemon-ink); box-shadow: none; }
 .story__plus { background: var(--lemon); color: var(--lemon-ink); }
 .tabbar a[aria-current="page"] { color: var(--lemon) !important; }
-/* 둥근 글꼴은 획이 넓어서 큰 제목 자간을 조금만 좁힘 */
-.page-head h1, .detail__title, .cal-head h1, .welcome__title { letter-spacing: -0.02em; }

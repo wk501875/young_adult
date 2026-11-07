@@ -1,23 +1,24 @@
 /* ═══════════════════════════════════════════════
  * 일산교회 청년회 — 디자인
- * 방향: 사진이 주인공인 커뮤니티 앱 — 크림색 종이 바탕, 먹색 버튼, 흰 테두리 사진, 큰 제목
+ * 방향: 사진이 주인공인 커뮤니티 앱 — 크림 바탕(#F3EDE0), 남색 버튼·글자(#01112B), 토프(#62594B)·베이지(#B9AB9B), 흰 테두리 사진, 큰 제목
  * ═══════════════════════════════════════════════ */
 :root {
-  --bg: #f5f2eb;
-  --surface: #fffdf9;
-  --surface-2: #faf7f1;
-  --surface-3: #efebe3;
-  --line: #e9e4da;
-  --line-2: #dbd4c7;
-  --text: #1d1b18;
-  --text-2: #57524a;
-  --text-3: #918a7e;
-  --brand: #1f1d1a;
-  --brand-hover: #3a3630;
-  --brand-ink: #fffdf9;
-  --brand-soft: #ebe6dc;
+  --bg: #f3ede0;
+  --surface: #fbf8f2;
+  --surface-2: #f7f2e9;
+  --surface-3: #ebe4d6;
+  --line: #e2d9ca;
+  --line-2: #cdc1b0;
+  --text: #01112b;
+  --text-2: #62594b;
+  --text-3: #8c8273;
+  --brand: #01112b;
+  --brand-hover: #12264a;
+  --brand-ink: #f3ede0;
+  --brand-soft: #e7e0d2;
   --blue: #2f6fd6;
-  --frame: #fffdf9;
+  --frame: #fbf8f2;
+  --bar: #01112b;
   --navy: #142a5c;
   --navy-2: #1d3a7a;
   --sky: #6fb5dc;
@@ -33,9 +34,9 @@
   --rose-soft: #fcecef;
   --danger: #dc3c3c;
   --danger-soft: #fdeeee;
-  --shadow-1: 0 1px 2px rgba(40, 30, 15, .04), 0 1px 3px rgba(40, 30, 15, .03);
-  --shadow-2: 0 2px 4px rgba(40, 30, 15, .05), 0 10px 24px rgba(40, 30, 15, .08);
-  --shadow-photo: 0 1px 2px rgba(40, 30, 15, .08), 0 8px 20px rgba(40, 30, 15, .12);
+  --shadow-1: 0 1px 2px rgba(1, 17, 43, .04), 0 1px 3px rgba(1, 17, 43, .03);
+  --shadow-2: 0 2px 4px rgba(1, 17, 43, .05), 0 10px 24px rgba(1, 17, 43, .08);
+  --shadow-photo: 0 1px 2px rgba(1, 17, 43, .08), 0 8px 20px rgba(1, 17, 43, .12);
   --shadow-pop: 0 20px 50px rgba(16, 24, 40, .2);
   --r-lg: 20px;
   --r: 12px;
@@ -45,21 +46,22 @@
   color-scheme: light;
 }
 :root[data-theme="dark"] {
-  --bg: #121110;
-  --surface: #1a1917;
-  --surface-2: #1f1e1b;
-  --surface-3: #282622;
-  --line: #2c2a26;
-  --line-2: #3a3732;
-  --text: #eeebe5;
-  --text-2: #b3ada3;
-  --text-3: #7f796f;
-  --brand: #eeebe5;
+  --bg: #020b1c;
+  --surface: #08162d;
+  --surface-2: #0c1b35;
+  --surface-3: #13233f;
+  --line: #1a2a47;
+  --line-2: #283a5b;
+  --text: #f3ede0;
+  --text-2: #b9ab9b;
+  --text-3: #85796a;
+  --brand: #f3ede0;
   --brand-hover: #ffffff;
-  --brand-ink: #161513;
-  --brand-soft: #2a2824;
+  --brand-ink: #01112b;
+  --brand-soft: #172846;
   --blue: #6c9cf0;
-  --frame: #2a2824;
+  --frame: #13233f;
+  --bar: #13233f;
   --navy: #1a2c55;
   --navy-2: #24407a;
   --sky-soft: #15242e;
@@ -1080,7 +1082,7 @@ button.evt { width: calc(100% + 16px); border: 0; background: none; font: inheri
 .post--photo .post__cover { margin: 0; border-radius: 14px; aspect-ratio: 4 / 3; }
 .post--photo .post__body { padding: 14px 12px 0; }
 .post--photo .post__title { margin-top: 0; }
-.post__chip { position: absolute; left: 12px; top: 12px; display: inline-flex; align-items: center; gap: 8px; max-width: calc(100% - 24px); padding: 4px 12px 4px 4px; border-radius: 999px; background: rgba(20, 18, 15, .55); color: #fff; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+.post__chip { position: absolute; left: 12px; top: 12px; display: inline-flex; align-items: center; gap: 8px; max-width: calc(100% - 24px); padding: 4px 12px 4px 4px; border-radius: 999px; background: rgba(1, 17, 43, .55); color: #fff; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
 .post__chip .av { width: 28px; height: 28px; font-size: 12px; }
 .post__chip b { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .post__chip small { font-size: 12px; opacity: .8; white-space: nowrap; }
@@ -1093,12 +1095,11 @@ button.evt { width: calc(100% + 16px); border: 0; background: none; font: inheri
 @media (max-width: 860px) {
   .tabbar {
     left: 12px; right: 12px; bottom: calc(10px + env(safe-area-inset-bottom)); padding: 6px; border: 0; border-radius: 22px;
-    background: #1f1d1a; box-shadow: 0 10px 30px rgba(20, 15, 10, .28);
+    background: var(--bar); box-shadow: 0 10px 30px rgba(1, 17, 43, .28);
   }
-  .tabbar a { padding: 7px 0 5px; border-radius: 16px; color: rgba(255, 253, 249, .55); transition: background-color .15s, color .15s; }
-  .tabbar a[aria-current="page"] { color: #fffdf9; background: rgba(255, 253, 249, .12); }
+  .tabbar a { padding: 7px 0 5px; border-radius: 16px; color: rgba(243, 237, 224, .55); transition: background-color .15s, color .15s; }
+  .tabbar a[aria-current="page"] { color: #f3ede0; background: rgba(243, 237, 224, .12); }
   .tabbar a[aria-current="page"]::before { content: none; }
-  [data-theme="dark"] .tabbar { background: #2a2824; }
   .main { padding-bottom: calc(110px + env(safe-area-inset-bottom)); }
 }
 @media (max-width: 560px) { .post__go { display: none !important; } }

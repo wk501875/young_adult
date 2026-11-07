@@ -23,6 +23,7 @@ const APIS = {
   board_write:   { path: '/in/boardb_write_json.php', needHash: true, write: true },
   board_upload:  { path: '/in/boardb_upload_json.php', needHash: true },  // multipart 전용
   comment:       { path: '/in/boardb_pro_json.php', needHash: true },    // 댓글 달기·지우기 (mode)
+  schedule:      { path: '/ex/church_schedule.php' },                   // 교회 일정 (청년회 부서)
 };
 
 const json = (o) =>

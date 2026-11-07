@@ -743,30 +743,38 @@ body.locked .side, body.locked .panel, body.locked .topbar, body.locked .tabbar 
 body.locked .shell { display: block; min-height: 0; }
 body.locked .main { padding: 0; }
 body.locked .main > * { max-width: none; }
-.login { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(380px, 1fr); min-height: 100vh; min-height: 100dvh; background: var(--surface); }
-/* 교회 그림은 잘리지 않게 통째로(contain) 보여주고, 남는 자리는 그림과 같은 하늘색·잔디색으로 채움 */
-.login__art {
-  position: relative; overflow: hidden; margin: 16px 0 16px 16px; border-radius: 28px;
-  background: linear-gradient(180deg, #7bc4e5 0%, #a6d6ee 100%);
-  container-type: size;
+/* 교회 그림을 화면 가득 흐리게 깔고, 그 위에 반투명 로그인 칸 */
+.login { position: relative; display: grid; place-items: center; min-height: 100vh; min-height: 100dvh; padding: 32px 20px; overflow: hidden; isolation: isolate; }
+.login__art { position: fixed; inset: 0; z-index: -1; overflow: hidden; background: linear-gradient(180deg, #7bc4e5 0%, #a6d6ee 70%, #cfe8f5 100%); }
+.login__pic {
+  position: absolute; inset: -40px; width: calc(100% + 80px); height: calc(100% + 80px);
+  object-fit: cover; object-position: center 72%; filter: blur(10px) saturate(1.08); transform: scale(1.02);
+  animation: login-in .8s var(--ease) both;
 }
-/* 그림 바깥은 그림의 하늘색(#7bc4e5)으로, 아래 잔디 띠는 그림의 잔디색(#9dbb77)으로.
-   잔디는 그림 높이의 15% — 보이는 그림 높이 = min(칸 높이, 칸 너비 × 1186/882) */
-.login__art.has-img { background: #7bc4e5; }
-.login__art.has-img::after {
-  content: ''; position: absolute; left: 0; right: 0; bottom: 0; background: #9dbb77;
-  height: min(15cqh, 20.17cqw);
-}
-.login__pic { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; object-fit: contain; object-position: center bottom; }
+@keyframes login-in { from { opacity: 0; } }
+/* 그림 위에 살짝 밝은 막을 씌워 글씨가 잘 읽히게 */
+.login__art.has-img::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(255, 255, 255, .10), rgba(255, 255, 255, .22)); }
 .login__art.has-img .login__sky { display: none; }
-.login__panel { display: grid; place-items: center; padding: 40px 32px; }
-.login__inner { width: 100%; max-width: 360px; }
-.login__brand { margin-bottom: 28px; }
-.login__brand .mark { display: block; margin-bottom: 18px; box-shadow: 0 10px 24px color-mix(in srgb, var(--brand) 30%, transparent); }
-.login__brand h1 { margin: 0; font-size: 30px; font-weight: 800; letter-spacing: -0.05em; }
-.login__brand p { margin: 6px 0 0; color: var(--text-2); font-size: 16px; }
+[data-theme="dark"] .login__art.has-img::after { background: rgba(8, 12, 20, .45); }
+
+.login__panel {
+  width: 100%; max-width: 420px; padding: 36px 32px 28px; border-radius: 28px;
+  background: rgba(255, 255, 255, .78); border: 1px solid rgba(255, 255, 255, .7);
+  backdrop-filter: blur(22px) saturate(1.4); -webkit-backdrop-filter: blur(22px) saturate(1.4);
+  box-shadow: 0 30px 80px rgba(20, 42, 92, .22), 0 2px 6px rgba(20, 42, 92, .06);
+  animation: card-in .5s var(--ease) both;
+}
+@keyframes card-in { from { opacity: 0; transform: translateY(12px); } }
+[data-theme="dark"] .login__panel { background: rgba(22, 26, 33, .78); border-color: rgba(255, 255, 255, .08); }
+.login__inner { width: 100%; }
+.login__brand { margin-bottom: 26px; text-align: center; }
+.login__brand .mark { display: block; margin: 0 auto 16px; box-shadow: 0 10px 24px color-mix(in srgb, var(--brand) 35%, transparent); }
+.login__brand h1 { margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -0.05em; }
+.login__brand p { margin: 6px 0 0; color: var(--text-2); font-size: 15.5px; }
 .login__form { display: grid; gap: 14px; }
-.login__note { display: flex; align-items: center; gap: 6px; margin: 18px 0 0; font-size: 13px; color: var(--text-3); }
+.login__form .input { background: rgba(255, 255, 255, .9); }
+[data-theme="dark"] .login__form .input { background: rgba(14, 17, 22, .7); }
+.login__note { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 18px 0 0; font-size: 13px; color: var(--text-3); }
 .login__note .ic { width: 14px; height: 14px; }
 .login__sky { position: absolute; inset: 0; pointer-events: none; }
 .login__sky i { position: absolute; display: block; border-radius: 999px; background: #fff; opacity: .9; filter: blur(1.5px); }
@@ -777,7 +785,7 @@ body.locked .main > * { max-width: none; }
 .login__sky .c2 { width: 120px; height: 36px; right: 14%; top: 24%; opacity: .8; }
 .login__sky .c2::before { width: 56px; height: 56px; left: 18px; top: -28px; }
 .login__sky .c2::after { width: 42px; height: 42px; left: 60px; top: -18px; }
-.login__sky .c3 { width: 96px; height: 30px; left: 42%; top: 36%; opacity: .7; }
+.login__sky .c3 { width: 96px; height: 30px; left: 42%; top: 70%; opacity: .7; }
 .login__sky .c3::before { width: 44px; height: 44px; left: 16px; top: -22px; }
 .login__sky .sun { width: 96px; height: 96px; right: 10%; top: 6%; border-radius: 50%; background: #f2c94c; opacity: .85; filter: blur(6px); }
 .login__sky .sun::before, .login__sky .sun::after { display: none; }
@@ -785,15 +793,13 @@ body.locked .main > * { max-width: none; }
 .pw .input { padding-right: 48px; }
 .pw__eye { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: 9px; background: none; color: var(--text-3); }
 .pw__eye[aria-pressed="true"] { color: var(--brand); }
-@media (max-width: 860px) {
-  .login { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
-  .login__art { margin: 0; border-radius: 0 0 28px 28px; height: 44vh; min-height: 260px; }
-  .login__panel { place-items: start center; padding: 28px 22px calc(28px + env(safe-area-inset-bottom)); }
-  .login__brand { margin-bottom: 20px; }
-  .login__brand .mark { display: none; }
-  .login__brand h1 { font-size: 26px; }
-  .login__sky .c3 { display: none; }
+@media (max-width: 560px) {
+  .login { padding: 20px 16px calc(20px + env(safe-area-inset-bottom)); }
+  .login__panel { padding: 28px 22px 22px; border-radius: 24px; }
+  .login__pic { filter: blur(8px) saturate(1.08); }
+  .login__brand h1 { font-size: 25px; }
 }
+@media (prefers-reduced-motion: reduce) { .login__pic, .login__panel { animation: none; } }
 
 /* ═══ 일정 (월정표) ═══════════════════════════ */
 /* 일정 색: 교회 전체 = 남색, 청년회 = 파랑, 부서 = 부서 색 */

@@ -2293,14 +2293,15 @@
     const draft = draftInfo();
     const posts = await loadPosts();
     if (!auth.hash) return;
-    // 달력: 교제록이 있는 날에 점
-    const byDay = new Map();
-    posts.forEach((p) => { if (p.date) { const k = ymd(p.date); if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(p); } });
-    if (!state.calMonth) {
-      const latest = posts.find((p) => p.date)?.date || new Date();
-      state.calMonth = new Date(latest.getFullYear(), latest.getMonth(), 1);
-    }
+    // 달력: 월정표 일정 기준 (교제록이 아니라 관리자가 올린 일정)
+    if (!state.calMonth) { const t = new Date(); state.calMonth = new Date(t.getFullYear(), t.getMonth(), 1); }
     const m = state.calMonth;
+    const mKey = `${m.getFullYear()}-${pad(m.getMonth() + 1)}`;
+    const calR = await loadMonth(mKey);
+    if (!auth.hash) return;
+    const f = calFilter();
+    const evs = (calR.status === 'ok' ? calR.events || [] : []).filter((e) => passFilter(e, f)).sort((x, y) => x.start.localeCompare(y.start));
+    const onDay = (e, k) => e.start <= k && (e.end || e.start) >= k;
     const first = new Date(m.getFullYear(), m.getMonth(), 1);
     const days = new Date(m.getFullYear(), m.getMonth() + 1, 0).getDate();
     const todayKey = ymd(new Date());
@@ -2308,11 +2309,14 @@
     for (let i = 0; i < first.getDay(); i++) cells.push('<span></span>');
     for (let d = 1; d <= days; d++) {
       const k = ymd(new Date(m.getFullYear(), m.getMonth(), d));
-      const list = byDay.get(k) || [];
-      const dots = [...new Set(list.map((p) => p.dept))].slice(0, 3).map((dp) => `<i class="t-${tone(dp)}"></i>`).join('');
-      cells.push(`<button type="button" class="cal__d${k === todayKey ? ' is-today' : ''}${k === state.day ? ' is-on' : ''}" data-day="${k}"${list.length ? '' : ' disabled'} aria-label="${m.getMonth() + 1}월 ${d}일${list.length ? ` 교제록 ${list.length}개` : ''}">${d}<span class="cal__dots">${dots}</span></button>`);
+      const list = evs.filter((e) => onDay(e, k));
+      const dots = [...new Set(list.map(evTone))].slice(0, 3).map((t) => `<i class="ev-${t}"></i>`).join('');
+      cells.push(`<button type="button" class="cal__d${k === todayKey ? ' is-today' : ''}${k === state.panelDay ? ' is-on' : ''}" data-day="${k}"${list.length ? '' : ' disabled'} aria-label="${m.getMonth() + 1}월 ${d}일${list.length ? ` 일정 ${list.length}개` : ''}">${d}<span class="cal__dots">${dots}</span></button>`);
     }
-    const dayPosts = state.day ? (byDay.get(state.day) || []) : posts.filter((p) => p.date && monthKey(p.date) === monthKey(m)).slice(0, 4);
+    const sel = state.panelDay && state.panelDay.startsWith(mKey) ? state.panelDay : '';
+    const shown = sel ? evs.filter((e) => onDay(e, sel))
+      : (mKey === todayKey.slice(0, 7) ? evs.filter((e) => (e.end || e.start) >= todayKey) : evs).slice(0, 4);
+    const emptyMsg = calR.status !== 'ok' ? '일정을 불러오지 못했어요' : sel ? '이 날은 일정이 없어요' : '이 달엔 남은 일정이 없어요';
     const latestPr = posts.find((p) => p.prayers.length);
     $p.innerHTML = `
       <section class="promo">
@@ -2329,22 +2333,18 @@
         </div>
         <div class="cal">${WEEK.map((w) => `<span class="cal__w">${w}</span>`).join('')}${cells.join('')}</div>
         <div class="evts">
-          ${dayPosts.length ? dayPosts.map((p) => `<a class="evt" href="#/post/${encodeURIComponent(p.id)}"><i class="evt__bar t-${tone(p.dept)}"></i><span><small>${fullDate(p.date)}${p.dept ? ` · ${esc(p.dept)}` : ''}</small><b>${esc(p.title)}</b></span></a>`).join('')
-            : '<p class="hint">이 달엔 교제록이 없어요</p>'}
+          ${shown.length ? shown.map((e) => `<button type="button" class="evt" data-ev="${esc(e.id)}"><i class="evt__bar ev-${evTone(e)}"></i><span><small>${esc(evWhen(e))} · ${esc(evLabel(e))}</small><b>${esc(e.title)}</b></span></button>`).join('')
+            : `<p class="hint">${emptyMsg}</p>`}
         </div>
+        <a class="pblock__more" href="#/calendar">월정표 전체 보기${icon('right')}</a>
       </section>
       <section class="pblock card">
         <h2>${icon('heart')}이번 주 기도제목</h2>
         <div id="panelPrayers">${latestPr ? prayerList(latestPr) : '<span class="sk sk-line"></span><span class="sk sk-line" style="width:70%"></span>'}</div>
       </section>`;
     $p.querySelectorAll('[data-cal]').forEach((b) => { b.onclick = () => { state.calMonth = new Date(m.getFullYear(), m.getMonth() + Number(b.dataset.cal), 1); renderPanel(); }; });
-    $p.querySelectorAll('[data-day]').forEach((b) => {
-      b.onclick = () => {
-        state.day = state.day === b.dataset.day ? '' : b.dataset.day;
-        renderPanel();
-        if (location.hash.replace(/^#\/?/, '') !== '') location.hash = '#/'; else listRedraw?.();
-      };
-    });
+    $p.querySelectorAll('[data-day]').forEach((b) => { b.onclick = () => { state.panelDay = state.panelDay === b.dataset.day ? '' : b.dataset.day; renderPanel(); }; });
+    $p.querySelectorAll('[data-ev]').forEach((b) => { b.onclick = () => openEvent(evs.find((e) => e.id === b.dataset.ev), calR.perms || { viewDepts: [], editDepts: [] }, mKey); });
     if (!latestPr) {
       await Promise.all(posts.slice(0, 6).map(fetchBody));
       const pr = posts.find((p) => p.prayers.length);

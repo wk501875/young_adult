@@ -2071,7 +2071,13 @@
     const tryImg = (list) => {
       if (!list.length) return;
       const img = new Image();
-      img.onload = () => { art.style.backgroundImage = `url("${list[0]}")`; art.classList.add('has-img'); };
+      img.onload = () => {
+        // 그림 전체가 보이도록 <img>로 넣음 (배경 cover처럼 잘리지 않게)
+        img.className = 'login__pic';
+        img.alt = '';
+        art.appendChild(img);
+        art.classList.add('has-img');
+      };
       img.onerror = () => tryImg(list.slice(1));
       img.src = list[0];
     };

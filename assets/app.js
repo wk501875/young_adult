@@ -2072,10 +2072,13 @@
       if (!list.length) return;
       const img = new Image();
       img.onload = () => {
-        // 그림 전체가 보이도록 <img>로 넣음 (배경 cover처럼 잘리지 않게)
+        // 뒤: 같은 그림을 크게 흐리게 깔아 화면을 채우고 / 앞: 교회 그림 전체를 잘리지 않게 또렷하게
+        const bg = img.cloneNode();
+        bg.className = 'login__bg';
+        bg.alt = '';
         img.className = 'login__pic';
         img.alt = '';
-        art.appendChild(img);
+        art.append(bg, img);
         art.classList.add('has-img');
       };
       img.onerror = () => tryImg(list.slice(1));

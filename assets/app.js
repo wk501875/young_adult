@@ -868,7 +868,7 @@
       const temp = { uid: 'tmp', username: auth.me?.name || '나', userid: auth.me?.userid, text, pending: true };
       list.push(temp); draw();
       $ta.value = ''; autosize(); $send.disabled = true;
-      const res = await callApi('comment', { mode: 'add_comment', board_uid: p.id, comment: text, url: `${location.origin}/#/post/${p.id}` });
+      const res = await callApi('comment', { mode: 'add_comment', board_uid: p.id, comment: text, url: p.link || `${location.origin}/#/post/${p.id}` });
       const i = list.indexOf(temp);
       if (res.status !== 'ok') {
         list.splice(i, 1); draw();
@@ -2187,6 +2187,94 @@
     $app.innerHTML = pageHead(title) + emptyState({ ic: 'lock', title: '관리자만 볼 수 있어요', desc: '청년회 관리자에게 권한을 받으면 볼 수 있어요' });
   }
 
+  /* ═══ 화면: 앨범 (교회 사이트 청년회 앨범 게시판) ═══════════
+   * 목록은 use_kind=3, 사진 목록(files)은 use_kind=1 상세에서만 옴.
+   * 앨범 글은 대개 세로로 긴 포토스토리 한 장 → 목록엔 작은 그림(sum_), 상세에선 원본.
+   */
+  const ALBUMS = C.albums || [];
+  const albumState = {}; // 게시판 → { items, page, done }
+  let albumTab = ALBUMS[0]?.boardId;
+  const thumbOf = (u) => String(u || '').replace(/\/([^/]+)$/, '/sum_$1');
+  const albumDate = (s) => { const d = s ? new Date(String(s).replace(' ', 'T')) : null; return d && !isNaN(d) ? d : null; };
+  const albumItem = (x) => ({
+    id: String(x.postUid || x.uid), board: String(x.position || albumTab), title: String(x.subject || '').trim(),
+    date: albumDate(x.created), cover: x.filepath || '', hits: Number(x.hit) || 0, comments: Number(x.total_comment) || 0, likes: Number(x.total_good) || 0,
+  });
+  async function loadAlbums(board, more) {
+    const s = albumState[board] || (albumState[board] = { items: [], page: 0, done: false });
+    if (s.items.length && !more) return s;
+    const r = await callApi('board_post', { chId: C.board.chId, flag: 1, use_kind: 3, boardId: board, page: s.page + 1, limit: 24 });
+    if (r.status === 'not') { s.done = true; return s; }
+    if (r.status !== 'ok' || !Array.isArray(r.result)) { s.error = errText(r); return s; }
+    s.error = '';
+    s.page += 1;
+    const seen = new Set(s.items.map((x) => x.id));
+    r.result.map(albumItem).forEach((x) => { if (!seen.has(x.id)) s.items.push(x); });
+    if (r.result.length < 24) s.done = true;
+    return s;
+  }
+  const albumCard = (a) => `<a class="alb" href="#/album/${encodeURIComponent(a.id)}">
+      <span class="alb__pic">${a.cover ? `<img src="${esc(thumbOf(a.cover))}" alt="" loading="lazy" decoding="async" onload="this.classList.add('loaded')" onerror="this.remove()">` : ''}</span>
+      <span class="alb__txt"><b>${esc(a.title)}</b><small>${a.date ? `${a.date.getFullYear()}. ${a.date.getMonth() + 1}. ${a.date.getDate()}.` : ''}${a.comments ? ` · ${icon('msg')}${a.comments}` : ''}</small></span>
+    </a>`;
+  async function viewAlbums() {
+    if (!ALBUMS.length) { $app.innerHTML = pageHead('앨범') + emptyState({ ic: 'image', title: '연결된 앨범이 없어요' }); return; }
+    $app.innerHTML = `
+      ${pageHead('앨범', '포토스토리와 행사 사진을 모아 봐요')}
+      ${ALBUMS.length > 1 ? `<div class="seg seg--full" id="albTabs" role="group" aria-label="앨범 고르기">${ALBUMS.map((b) => `<button type="button" data-b="${esc(b.boardId)}" aria-pressed="${String(b.boardId) === String(albumTab)}">${esc(b.name)}</button>`).join('')}</div>` : ''}
+      <div id="albList"><div class="albs">${Array.from({ length: 6 }, () => '<span class="alb alb--sk"><span class="alb__pic sk"></span><span class="sk sk-line"></span></span>').join('')}</div></div>`;
+    document.getElementById('albTabs')?.addEventListener('click', (e) => { const b = e.target.closest('[data-b]'); if (b) { albumTab = b.dataset.b; viewAlbums(); } });
+    const board = albumTab;
+    const s = await loadAlbums(board);
+    const draw = () => {
+      const $l = document.getElementById('albList');
+      if (!$l || board !== albumTab) return;
+      if (!s.items.length) {
+        $l.innerHTML = s.error ? emptyState({ ic: 'alert', title: '앨범을 불러오지 못했어요', desc: esc(s.error) }) : emptyState({ ic: 'image', title: '아직 올라온 앨범이 없어요' });
+        return;
+      }
+      $l.innerHTML = `<div class="albs">${s.items.map(albumCard).join('')}</div>
+        ${s.done ? '' : `<div class="more"><button type="button" class="btn" id="albMore">더 보기</button></div>`}`;
+      document.getElementById('albMore')?.addEventListener('click', async (e) => {
+        e.target.disabled = true; e.target.textContent = '불러오는 중…';
+        await loadAlbums(board, true);
+        draw();
+      });
+    };
+    draw();
+  }
+  async function viewAlbum(id) {
+    const back = `<a class="back" href="#/album">${icon('left')}앨범</a>`;
+    $app.innerHTML = `${back}<div class="card detail"><span class="sk sk-line" style="width:30%"></span><span class="sk sk-line" style="width:80%;height:24px"></span><span class="alb-sk sk"></span></div>`;
+    const known = Object.values(albumState).flatMap((s) => s.items).find((x) => x.id === id);
+    const board = known?.board || albumTab;
+    const r = await callApi('board_post', { chId: C.board.chId, flag: 1, use_kind: 1, boardId: board, uid: id });
+    if (!document.querySelector('.detail')) return;
+    const row = (Array.isArray(r.result) ? r.result : []).find((x) => String(x.postUid) === id);
+    if (r.status !== 'ok' || !row) { $app.innerHTML = back + emptyState({ ic: 'alert', title: '앨범을 찾을 수 없어요', desc: r.status === 'ok' ? '지워졌거나 볼 수 없는 글이에요' : esc(errText(r)) }); return; }
+    const a = { ...albumItem(row), author: row.username || '' };
+    const files = (row.files || []).filter((f) => /^(jpe?g|png|gif|webp)$/i.test(f.extention || '') && f.filepath).sort((x, y) => (Number(x.sort_no) || 0) - (Number(y.sort_no) || 0));
+    const pics = files.length ? files.map((f) => f.filepath) : (a.cover ? [a.cover] : []);
+    const mb = files.reduce((n, f) => n + (Number(f.filesize) || 0), 0) / 1e6;
+    const text = htmlToText(row.content || '').trim();
+    $app.innerHTML = `
+      ${back}
+      <article class="card detail">
+        <h1 class="detail__title">${esc(a.title)}</h1>
+        <div class="detail__by">
+          ${avatar(a.author)}
+          <div><b>${esc(a.author || '청년회')}</b><span>${fullDate(a.date)}${a.hits ? ` · 조회 ${a.hits}` : ''}</span></div>
+        </div>
+        ${text ? `<p class="sec__text">${esc(text)}</p>` : ''}
+        ${pics.length ? `${mb >= 8 ? `<p class="hint alb-note">${icon('image')}사진이 커서(${Math.round(mb)}MB) 천천히 보일 수 있어요</p>` : ''}
+          <div class="alb-pics">${pics.map((u, i) => `<button type="button" class="alb-pic" data-photo="${i}" aria-label="사진 ${i + 1} 크게 보기"><img src="${esc(u)}" alt="" loading="${i ? 'lazy' : 'eager'}" decoding="async" style="background-image:url('${esc(thumbOf(u))}')" onload="this.classList.add('loaded')"></button>`).join('')}</div>`
+          : '<p class="muted">사진이 없어요</p>'}
+        <section class="sec" id="comments"></section>
+      </article>`;
+    $app.querySelectorAll('[data-photo]').forEach((b) => { b.onclick = () => lightbox(pics, Number(b.dataset.photo)); });
+    drawComments({ id: a.id, comments: a.comments, link: `${location.origin}/#/album/${a.id}` });
+  }
+
   /* ─── 틀: 위쪽 바 · 왼쪽 메뉴 · 아래 탭 ─── */
   const NAV = () => [
     ['list', '#/', '홈', 'book'],
@@ -2194,6 +2282,7 @@
     ['meetup', '#/meetup', '번개', 'zap'],
     ['write', '#/write', '쓰기', 'pen'],
     ['prayers', '#/prayers', '기도제목', 'heart'],
+    ...(ALBUMS.length ? [['album', '#/album', '앨범', 'image']] : []),
     ...(isAdmin() ? [['attendance', '#/attendance', '참석 흐름', 'chart'], ['admin', '#/admin', '관리', 'users']] : []),
     ['settings', '#/settings', '내 정보', 'user'],
   ];
@@ -2204,7 +2293,7 @@
     const me = auth.me;
     const n = newCount();
     const badge = (k) => (k === 'list' && n ? `<span class="badge" aria-label="새 글 ${n}개">${n > 99 ? '99+' : n}</span>` : '');
-    document.title = tab === 'list' ? APP : `${({ prayers: '기도제목', write: '교제록 쓰기', attendance: '참석 흐름', settings: '내 정보', calendar: '일정', admin: '관리', meetup: '번개' })[tab] || '교제록'} · ${APP}`;
+    document.title = tab === 'list' ? APP : `${({ prayers: '기도제목', write: '교제록 쓰기', attendance: '참석 흐름', settings: '내 정보', calendar: '일정', admin: '관리', meetup: '번개', album: '앨범' })[tab] || '교제록'} · ${APP}`;
     const $top = document.getElementById('topbar');
     if (!document.getElementById('gq')) $top.innerHTML = `
       <a class="brand" href="#/">${brandMark}<span>${esc(APP)}</span></a>
@@ -2471,6 +2560,7 @@
     if (name === 'calendar') return viewCalendar();
     if (name === 'meetup') return rest.length ? viewMeetup(decodeURIComponent(rest.join('/'))) : viewMeetups();
     if (name === 'admin') return viewAdmin();
+    if (name === 'album') return rest.length ? viewAlbum(decodeURIComponent(rest.join('/'))) : viewAlbums();
     return viewList({ restore });
   }
   window.addEventListener('hashchange', route);

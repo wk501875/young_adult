@@ -747,10 +747,17 @@ body.locked .main > * { max-width: none; }
 /* 교회 그림은 잘리지 않게 통째로(contain) 보여주고, 남는 자리는 그림과 같은 하늘색·잔디색으로 채움 */
 .login__art {
   position: relative; overflow: hidden; margin: 16px 0 16px 16px; border-radius: 28px;
-  background: linear-gradient(180deg, #79c2e6 0%, #a6d6ee 100%);
+  background: linear-gradient(180deg, #7bc4e5 0%, #a6d6ee 100%);
+  container-type: size;
 }
-.login__art.has-img { background: linear-gradient(180deg, #79c2e6 0%, #79c2e6 86%, #9cba78 86%, #9cba78 100%); }
-.login__pic { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; object-position: center bottom; }
+/* 그림 바깥은 그림의 하늘색(#7bc4e5)으로, 아래 잔디 띠는 그림의 잔디색(#9dbb77)으로.
+   잔디는 그림 높이의 15% — 보이는 그림 높이 = min(칸 높이, 칸 너비 × 1186/882) */
+.login__art.has-img { background: #7bc4e5; }
+.login__art.has-img::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0; background: #9dbb77;
+  height: min(15cqh, 20.17cqw);
+}
+.login__pic { position: absolute; inset: 0; z-index: 1; width: 100%; height: 100%; object-fit: contain; object-position: center bottom; }
 .login__art.has-img .login__sky { display: none; }
 .login__panel { display: grid; place-items: center; padding: 40px 32px; }
 .login__inner { width: 100%; max-width: 360px; }

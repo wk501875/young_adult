@@ -306,6 +306,16 @@
    * 화면 (UI)
    * ════════════════════════════════════════════════════════════ */
   const APP = C.appName || '일산교회 청년회';
+  // 화면 밝기 (기본: 밝게)
+  const darkMQ = window.matchMedia('(prefers-color-scheme: dark)');
+  function applyTheme() {
+    let t = store.get('theme', 'light');
+    if (t === 'system') t = darkMQ.matches ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', t);
+    document.getElementById('themeColor')?.setAttribute('content', t === 'dark' ? '#101317' : '#f4f6f9');
+  }
+  darkMQ.addEventListener?.('change', applyTheme);
+  applyTheme();
   const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const isWide = () => window.matchMedia('(min-width: 1180px)').matches;
 
@@ -1231,6 +1241,12 @@
         <div class="profile__who"><b>${esc(me?.name || '로그인됨')}${me?.sex ? ` <span>${esc(me.sex)}</span>` : ''}</b><small>${esc([me?.church, me?.userid].filter(Boolean).join(' · '))}</small></div>
         ${me?.admin ? '<span class="tag t-sun">관리자</span>' : ''}
       </section>
+      <section class="card setting">
+        <span><b>화면 밝기</b><small>어두운 화면이 편하면 바꿔 보세요</small></span>
+        <div class="seg" id="themePick" role="group" aria-label="화면 밝기">
+          ${[['light', '밝게'], ['dark', '어둡게'], ['system', '기기 설정']].map(([k, l]) => `<button type="button" data-t="${k}" aria-pressed="${store.get('theme', 'light') === k}">${l}</button>`).join('')}
+        </div>
+      </section>
       <div class="list-card card">
         <a href="${esc(C.board.siteUrl)}" target="_blank" rel="noopener">${icon('external')}<span>교회 사이트 청년회교제실</span>${icon('right', 'ic--end')}</a>
         <button type="button" id="logout">${icon('logout')}<span>로그아웃</span>${icon('right', 'ic--end')}</button>
@@ -1257,6 +1273,13 @@
         </div>
       </details>`;
 
+    document.getElementById('themePick').onclick = (e) => {
+      const b = e.target.closest('[data-t]');
+      if (!b) return;
+      store.set('theme', b.dataset.t);
+      applyTheme();
+      document.querySelectorAll('#themePick [data-t]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    };
     const lines = (id) => document.getElementById(id).value.split('\n').map((s) => s.trim()).filter(Boolean);
     document.getElementById('saveRoster').onclick = () => { store.set('roster', [...new Set(lines('roster'))]); toast('명단을 저장했어요'); };
     document.getElementById('fromPosts').onclick = async (e) => {
@@ -1335,13 +1358,13 @@
         ${latest ? `<ul class="plist">${latest.prayers.slice(0, 5).map((x) => `<li>${avatar(x.name, '', 'xs')}<span><b>${esc(x.name)}</b>${esc(x.text)}</span></li>`).join('')}</ul>
           <a class="pblock__more" href="#/prayers">기도제목 모두 보기${icon('right')}</a>` : '<p class="hint">아직 기도제목이 없어요</p>'}
       </section>
-      <section class="pblock">
+      ${sched.length ? `<section class="pblock">
         <h2>${icon('calendar')}다가오는 일정</h2>
-        ${sched.length ? `<ul class="slist">${sched.map((s) => {
+        ${`<ul class="slist">${sched.map((s) => {
           const d = parseDate(s.start_date);
           return `<li><span class="datebox"><b>${d ? d.getDate() : ''}</b><small>${d ? `${d.getMonth() + 1}월` : ''}</small></span><span><b>${esc(s.title || '')}</b><small>${[d ? WEEK[d.getDay()] + '요일' : '', String(s.start_time || '').slice(0, 5), s.location].filter(Boolean).map(esc).join(' · ')}</small></span></li>`;
-        }).join('')}</ul>` : '<p class="hint">예정된 일정이 없어요</p>'}
-      </section>`;
+        }).join('')}</ul>`}
+      </section>` : ''}`;
   }
   async function loadSchedule() {
     if (state.schedule) return state.schedule;

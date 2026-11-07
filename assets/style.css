@@ -36,8 +36,7 @@
   --font: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
   color-scheme: light;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
+:root[data-theme="dark"] {
     --bg: #101317;
     --surface: #171b21;
     --surface-2: #1b2027;
@@ -66,7 +65,6 @@
     --shadow-2: 0 1px 2px rgba(0, 0, 0, .3);
     --shadow-pop: 0 18px 48px rgba(0, 0, 0, .5);
     color-scheme: dark;
-  }
 }
 
 * { box-sizing: border-box; }
@@ -231,7 +229,7 @@ img { max-width: 100%; display: block; }
 .t-sun { background: var(--sun-soft); color: var(--sun-ink); }
 .t-green { background: var(--green-soft); color: var(--green-ink); }
 .t-rose { background: var(--rose-soft); color: var(--rose-ink); }
-@media (prefers-color-scheme: dark) { .t-sky { color: var(--sky); } }
+[data-theme="dark"] .t-sky { color: var(--sky); }
 .tag { display: inline-flex; align-items: center; height: 24px; padding: 0 9px; border-radius: 7px; font-size: 12.5px; font-weight: 650; white-space: nowrap; }
 .tag--new { background: var(--brand); color: var(--brand-ink); }
 
@@ -562,7 +560,8 @@ pre.json {
 .toast.show { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
 .toast.is-error { background: #3a1d20; color: #ffd9d9; }
 .toast button { border: 0; background: none; padding: 4px 6px; color: #9fd0f0; font-weight: 700; font-size: 15px; white-space: nowrap; }
-@media (prefers-color-scheme: dark) { .toast { background: #e8ecf1; color: #17202b; } .toast button { color: #2b5f8e; } }
+[data-theme="dark"] .toast { background: #e8ecf1; color: #17202b; }
+[data-theme="dark"] .toast button { color: #2b5f8e; }
 @media (max-width: 860px) { .toast { bottom: calc(80px + env(safe-area-inset-bottom)); } }
 
 /* ─── 모달 · 바텀시트 ────────────────────────── */
@@ -640,7 +639,8 @@ body.locked .main > * { max-width: none; }
 .login__sky .c3::before { width: 42px; height: 42px; left: 16px; top: -22px; }
 .login__sky .sun { width: 84px; height: 84px; right: 9%; top: 7%; border-radius: 50%; background: var(--sun); opacity: .55; filter: blur(10px); }
 .login__sky .sun::before, .login__sky .sun::after { display: none; }
-@media (prefers-color-scheme: dark) { .login__sky i { opacity: .07; } .login__sky .sun { opacity: .25; } }
+[data-theme="dark"] .login__sky i { opacity: .07; }
+[data-theme="dark"] .login__sky .sun { opacity: .25; }
 @media (max-width: 560px) {
   .login__sky .c3 { display: none; }
   .login__sky .c1 { left: -30px; top: 9%; }
@@ -659,3 +659,10 @@ body.locked .main > * { max-width: none; }
 .pw .input { padding-right: 48px; }
 .pw__eye { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 36px; height: 36px; border: 0; border-radius: 9px; background: none; color: var(--text-3); }
 .pw__eye[aria-pressed="true"] { color: var(--brand); }
+
+/* 화면 밝기 설정 */
+.setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 14px 18px; margin-bottom: 12px; }
+.setting > span { display: grid; line-height: 1.4; }
+.setting b { font-size: 15.5px; }
+.setting small { font-size: 13px; color: var(--text-3); }
+.setting .seg button { height: 34px; padding: 0 12px; font-size: 13.5px; }

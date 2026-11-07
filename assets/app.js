@@ -606,6 +606,15 @@
 
   /* ─── 명단·작성 순번 ─────────────────────── */
   const getRoster = () => store.get('roster', []);
+  // 부서별 명단 (Cloudflare 환경 변수 ROSTERS → 로그인한 회원만 받음, 기기에 저장 안 함)
+  async function loadRosters() {
+    if (!auth.hash) return {};
+    if (!state.rosters) {
+      const r = await callApi('rosters');
+      state.rosters = r.status === 'ok' && r.result && typeof r.result === 'object' ? r.result : {};
+    }
+    return state.rosters;
+  }
   const getDuty = () => store.get('duty', { order: [], start: '' });
   function dutyFor(date) {
     const { order, start } = getDuty();
@@ -637,24 +646,32 @@
   /* ─── 화면: 작성 ─────────────────────────── */
   const photos = [];
   async function viewWrite() {
-    const roster = getRoster();
+    $app.innerHTML = `<div class="page-head"><h1>교제록 작성</h1></div>${skeleton()}`;
+    const rosters = await loadRosters();
+    if (location.hash.replace(/^#\/?/, '') !== 'write') return;
+    const depts = Object.keys(rosters).filter((k) => rosters[k].length);
     const today = new Date();
     const draft = store.get('draft', null) || { date: ymd(today), writer: dutyFor(today), people: [], extra: '', verse: '', verseNote: '', share: '', prayers: {}, bungae: '' };
+    let dept = depts.includes(draft.dept) ? draft.dept : (depts.includes(store.get('lastDept', '')) ? store.get('lastDept', '') : (depts[0] || ''));
+    const rosterOf = (d) => (d && rosters[d]) || getRoster();
+    const roster = rosterOf(dept);
     const canPost = C.board.writeEnabled && !!auth.hash;
+    const checkBoxes = (list, checked) => list.map((n) => `<label class="check"><input type="checkbox" name="people" value="${esc(n)}"${checked.includes(n) ? ' checked' : ''}><span>${esc(n)}</span></label>`).join('');
 
     $app.innerHTML = `
-      <div class="page-head"><h1>교제록 작성</h1><p>양식대로 쓰고, 복사해서 교회 사이트 게시판에 붙여넣어요</p></div>
-      ${roster.length ? '' : `<div class="notice"><span>👥</span><div><b>명단이 비어 있어요</b><br>참석자를 체크하려면 <a href="#/settings">설정</a>에서 청년회 명단을 먼저 입력해 주세요.</div></div>`}
+      <div class="page-head"><h1>교제록 작성</h1><p>양식대로 쓰고, 게시판에 바로 올리거나 복사해서 붙여넣어요</p></div>
+      ${depts.length || roster.length ? '' : `<div class="notice"><span>👥</span><div><b>부서 명단이 아직 없어요</b><br>${auth.hash ? '부서별 명단이 등록되면 여기서 참석자를 고를 수 있어요. 그 전에는 아래 칸에 이름을 직접 적어 주세요.' : '<a href="#/settings">로그인</a>하면 부서 명단에서 참석자를 고를 수 있어요.'}</div></div>`}
       <div class="duty"><div>이번 주 작성 담당 <b id="dutyName">${esc(dutyFor(parseDate(draft.date) || today) || '—')}</b></div><span class="small muted">다음 주: ${esc(dutyFor(new Date((parseDate(draft.date) || today).getTime() + 7 * DAY_MS)) || '—')}</span></div>
       <form class="card form-card" id="f" autocomplete="off">
+        ${depts.length ? `<div class="field"><span>부서</span><div class="chips" id="deptPick" style="margin:0">${depts.map((d) => `<button type="button" class="chip" data-d="${esc(d)}" aria-pressed="${d === dept}">${esc(d)}</button>`).join('')}</div></div>` : ''}
         <div class="grid-2">
           <label class="field"><span>날짜</span><input class="input" type="date" name="date" value="${esc(draft.date)}"></label>
           <label class="field"><span>작성자</span><input class="input" name="writer" list="rosterList" value="${esc(draft.writer)}" placeholder="이름"></label>
         </div>
         <datalist id="rosterList">${roster.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
         <div class="field"><span>참석자 <b id="pc" class="muted"></b></span>
-          <div class="checks" id="checks">${roster.map((n) => `<label class="check"><input type="checkbox" name="people" value="${esc(n)}"${draft.people.includes(n) ? ' checked' : ''}><span>${esc(n)}</span></label>`).join('')}</div>
-          <input class="input" name="extra" value="${esc(draft.extra)}" placeholder="명단에 없는 사람 (쉼표로 구분, 예: 새가족 홍길동)" style="margin-top:8px">
+          <div class="checks" id="checks">${checkBoxes(roster, draft.people)}</div>
+          <input class="input" name="extra" value="${esc(draft.extra)}" placeholder="${roster.length ? '명단에 없는 사람' : '참석자 이름'} (쉼표로 구분, 예: 새가족 홍길동)" style="margin-top:8px">
         </div>
         <label class="field"><span>말씀 본문</span><input class="input" name="verse" value="${esc(draft.verse)}" placeholder="예: 요한복음 15:5"></label>
         <label class="field"><span>말씀 요약</span><textarea class="textarea" name="verseNote" placeholder="말씀에서 받은 은혜를 간단히">${esc(draft.verseNote)}</textarea></label>
@@ -700,6 +717,7 @@
       const extras = extra.split(/[,，、]+/).map((s) => s.trim()).filter(Boolean);
       document.querySelectorAll('#prayers input').forEach((i) => { prayerDraft[i.dataset.name] = i.value; });
       return {
+        dept,
         date: String(fd.get('date') || ''), writer: String(fd.get('writer') || '').trim(),
         people, extra, all: [...people, ...extras.filter((n) => !people.includes(n))],
         verse: String(fd.get('verse') || '').trim(), verseNote: String(fd.get('verseNote') || '').trim(),
@@ -715,7 +733,12 @@
         ? all.map((n) => `<div class="prayer-input"><label for="pr-${esc(n)}">${esc(n)}</label><input class="input" id="pr-${esc(n)}" data-name="${esc(n)}" value="${esc(prayerDraft[n] || '')}" placeholder="기도제목"></div>`).join('')
         : `<div class="muted small">참석자를 체크하면 사람마다 입력 칸이 생겨요</div>`;
     }
-    const titleOf = (d) => { const dt = parseDate(d.date); return `${C.groupName} 교제록 · ${dt ? `${dt.getFullYear()}년 ${dt.getMonth() + 1}월 ${dt.getDate()}일` : ''}`; };
+    // 게시판에서 쓰던 제목 모양: "[2026 순종부] 2026.10.24 토요교제" (부서 없으면 "2026.10.24 청년회 토요교제")
+    const titleOf = (d) => {
+      const dt = parseDate(d.date) || new Date();
+      const meeting = C.meetingName || '토요교제';
+      return d.dept ? `[${dt.getFullYear()} ${d.dept}] ${dotDate(dt)} ${meeting}` : `${dotDate(dt)} ${C.groupName} ${meeting}`;
+    };
     function lines(d) {
       const dt = parseDate(d.date);
       const out = [];
@@ -745,6 +768,20 @@
     }
     $f.addEventListener('input', update);
     $f.addEventListener('change', update);
+    // 부서를 바꾸면 그 부서 명단으로 참석자 칸을 다시 그림 (다른 부서에서 체크한 사람은 풀림)
+    const $dp = document.getElementById('deptPick');
+    if ($dp) $dp.onclick = (e) => {
+      const b = e.target.closest('[data-d]');
+      if (!b || b.dataset.d === dept) return;
+      dept = b.dataset.d;
+      store.set('lastDept', dept);
+      $dp.querySelectorAll('[data-d]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.d === dept)));
+      const list = rosterOf(dept);
+      const kept = new FormData($f).getAll('people').filter((n) => list.includes(n));
+      document.getElementById('checks').innerHTML = checkBoxes(list, kept);
+      document.getElementById('rosterList').innerHTML = list.map((n) => `<option value="${esc(n)}">`).join('');
+      update();
+    };
     $f.addEventListener('submit', (e) => e.preventDefault());
     update();
 
@@ -801,7 +838,7 @@
       if (r.status !== 'ok') { done(`올리지 못했어요: ${typeof r.result === 'string' ? r.result : '알 수 없는 오류'}`); return; }
       store.del('draft');
       photos.splice(0).forEach((p) => URL.revokeObjectURL(p.url));
-      state.posts = null; state.loading = null; // 목록 새로 불러오기
+      state.posts = null; state.loading = null; state.rosters = null; // 목록 새로 불러오기
       toast('게시판에 올렸어요 🎉');
       location.hash = r.result?.uid ? `#/post/${r.result.uid}` : '#/';
     };
@@ -852,6 +889,7 @@
 
   /* ─── 화면: 설정 ─────────────────────────── */
   async function viewSettings() {
+    syncNav();
     const roster = getRoster();
     const duty = getDuty();
     const B = C.board;
@@ -870,7 +908,7 @@
         <section class="card stack" id="loginCard">
           <h2 class="month" style="margin:0">깨사모 로그인</h2>
           ${auth.hash ? `
-            <div class="login-on"><span class="avatar" aria-hidden="true">${esc((me?.name || '나').slice(0, 1))}</span><div><b>${esc(me?.name || '로그인됨')}</b>${me?.sex ? ` ${esc(me.sex)}` : ''}${me?.church ? `<br><span class="small muted">${esc(me.church)}</span>` : ''}</div></div>
+            <div class="login-on"><span class="avatar" aria-hidden="true">${esc((me?.name || '나').slice(0, 1))}</span><div><b>${esc(me?.name || '로그인됨')}</b>${me?.sex ? ` ${esc(me.sex)}` : ''}${me?.admin ? ' <span class="badge">관리자</span>' : ''}<br><span class="small muted">${esc([me?.church, me?.userid].filter(Boolean).join(' · '))}</span></div></div>
             <p class="small muted" style="margin:0">청년회교제실 글을 읽고, 앱에서 바로 글을 올릴 수 있어요.</p>
             <div class="btn-row"><button class="btn" id="logout">로그아웃</button></div>`
           : `
@@ -882,8 +920,8 @@
             </form>`}
         </section>
         <section class="card stack">
-          <h2 class="month" style="margin:0">청년회 명단</h2>
-          <p class="small muted" style="margin:0">한 줄에 한 명씩. 작성 화면의 참석자 체크 목록이 됩니다.</p>
+          <h2 class="month" style="margin:0">이 기기 명단</h2>
+          <p class="small muted" style="margin:0">한 줄에 한 명씩. 부서 명단이 등록되기 전에만 작성 화면의 참석자 목록으로 쓰여요. 작성 담당 순번에도 쓰여요.</p>
           <textarea class="textarea" id="roster" rows="8" placeholder="김가람&#10;이나래&#10;박한결">${esc(roster.join('\n'))}</textarea>
           <div class="btn-row"><button class="btn btn--primary" id="saveRoster">명단 저장</button><button class="btn" id="fromPosts">교제록에서 이름 가져오기</button></div>
         </section>
@@ -958,7 +996,7 @@
       }
       const m = await callApi('me', { hash: r.hash });
       auth.set(r.hash, m.status === 'ok' ? m.result : null);
-      state.posts = null; state.loading = null; // 실제 게시판으로 다시 불러오기
+      state.posts = null; state.loading = null; state.rosters = null; // 실제 게시판으로 다시 불러오기
       toast(`${m.result?.name || ''} 로그인했어요`.trim());
       viewSettings();
     };
@@ -966,7 +1004,7 @@
     if ($lo) $lo.onclick = () => {
       if (!confirm('로그아웃할까요?')) return;
       auth.clear();
-      state.posts = null; state.loading = null;
+      state.posts = null; state.loading = null; state.rosters = null;
       toast('로그아웃했어요');
       viewSettings();
     };
@@ -985,22 +1023,44 @@
     };
   }
 
+  /* ─── 관리자 (Cloudflare 환경 변수 ADMINS 에 아이디가 있는 사람) ─── */
+  const isAdmin = () => !!(auth.hash && auth.me?.admin);
+  const syncNav = () => {
+    const a = document.querySelector('.tabs a[data-tab="attendance"]');
+    if (a) a.hidden = !isAdmin();
+  };
+  function viewAdminOnly() {
+    $app.innerHTML = `<div class="page-head"><h1>참석 흐름</h1></div><div class="empty">🔒 관리자만 볼 수 있는 화면이에요</div>`;
+  }
+
   /* ─── 라우터 ─────────────────────────────── */
   function route() {
     const h = location.hash.replace(/^#\/?/, '');
     const [name, ...rest] = h.split('/');
     const tab = name === 'post' || !name ? 'list' : name;
+    syncNav();
     document.querySelectorAll('.tabs a').forEach((a) => {
       if (a.dataset.tab === tab) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     });
     window.scrollTo(0, 0);
     if (name === 'post') return viewPost(decodeURIComponent(rest.join('/')));
     if (name === 'prayers') return viewPrayers();
-    if (name === 'attendance') return viewAttendance();
+    if (name === 'attendance') return isAdmin() ? viewAttendance() : viewAdminOnly();
     if (name === 'write') return viewWrite();
     if (name === 'settings') return viewSettings();
     return viewList();
   }
   window.addEventListener('hashchange', route);
   route();
+
+  // 로그인돼 있으면 이름·관리자 여부를 새로 받아 둠 (관리자 목록이 바뀌어도 반영되도록)
+  if (auth.hash) {
+    callApi('me').then((m) => {
+      if (m.status !== 'ok' || !auth.hash) return;
+      const was = isAdmin();
+      auth.set(auth.hash, m.result);
+      syncNav();
+      if (was !== isAdmin() && /^#\/attendance/.test(location.hash)) route();
+    });
+  }
 })();

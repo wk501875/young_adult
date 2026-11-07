@@ -1,24 +1,27 @@
 /* ═══════════════════════════════════════════════
  * 일산교회 청년회 — 디자인
- * 방향: 사진이 주인공인 커뮤니티 앱 — 크림 바탕(#F3EDE0), 남색 버튼·글자(#01112B), 토프(#62594B)·베이지(#B9AB9B), 흰 테두리 사진, 큰 제목
+ * 방향: 사진이 주인공인 커뮤니티 앱 — 레몬 색 조합(모래 #F2E1B5 · 하늘 #C5D9DE · 세이지 #A1B9B0 · 레몬 #E4B922), 둥근 글꼴, 흰 테두리 사진, 큰 제목
  * ═══════════════════════════════════════════════ */
 :root {
-  --bg: #f3ede0;
-  --surface: #fbf8f2;
-  --surface-2: #f7f2e9;
-  --surface-3: #ebe4d6;
-  --line: #e2d9ca;
-  --line-2: #cdc1b0;
-  --text: #01112b;
-  --text-2: #62594b;
-  --text-3: #8c8273;
-  --brand: #01112b;
-  --brand-hover: #12264a;
-  --brand-ink: #f3ede0;
-  --brand-soft: #e7e0d2;
+  --bg: #f6eedb;
+  --surface: #fffbf1;
+  --surface-2: #fbf5e6;
+  --surface-3: #f2e8cf;
+  --line: #ebdfc2;
+  --line-2: #d9c9a3;
+  --text: #22302b;
+  --text-2: #4f615a;
+  --text-3: #869690;
+  --brand: #3f5a50;
+  --brand-hover: #33493f;
+  --brand-ink: #ffffff;
+  --brand-soft: #c5d9de;
+  --lemon: #e4b922;
+  --lemon-hover: #d4aa12;
+  --lemon-ink: #22302b;
   --blue: #2f6fd6;
-  --frame: #fbf8f2;
-  --bar: #01112b;
+  --frame: #fffbf1;
+  --bar: #3f5a50;
   --navy: #142a5c;
   --navy-2: #1d3a7a;
   --sky: #6fb5dc;
@@ -34,34 +37,37 @@
   --rose-soft: #fcecef;
   --danger: #dc3c3c;
   --danger-soft: #fdeeee;
-  --shadow-1: 0 1px 2px rgba(1, 17, 43, .04), 0 1px 3px rgba(1, 17, 43, .03);
-  --shadow-2: 0 2px 4px rgba(1, 17, 43, .05), 0 10px 24px rgba(1, 17, 43, .08);
-  --shadow-photo: 0 1px 2px rgba(1, 17, 43, .08), 0 8px 20px rgba(1, 17, 43, .12);
+  --shadow-1: 0 1px 2px rgba(34, 48, 43, .04), 0 1px 3px rgba(34, 48, 43, .03);
+  --shadow-2: 0 2px 4px rgba(34, 48, 43, .05), 0 10px 24px rgba(34, 48, 43, .08);
+  --shadow-photo: 0 1px 2px rgba(34, 48, 43, .08), 0 8px 20px rgba(34, 48, 43, .12);
   --shadow-pop: 0 20px 50px rgba(16, 24, 40, .2);
   --r-lg: 20px;
   --r: 12px;
   --top: 68px;
   --ease: cubic-bezier(.2, .8, .2, 1);
-  --font: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+  --font: 'NanumSquareRound', 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
   color-scheme: light;
 }
 :root[data-theme="dark"] {
-  --bg: #020b1c;
-  --surface: #08162d;
-  --surface-2: #0c1b35;
-  --surface-3: #13233f;
-  --line: #1a2a47;
-  --line-2: #283a5b;
-  --text: #f3ede0;
-  --text-2: #b9ab9b;
-  --text-3: #85796a;
-  --brand: #f3ede0;
-  --brand-hover: #ffffff;
-  --brand-ink: #01112b;
-  --brand-soft: #172846;
+  --bg: #131917;
+  --surface: #1a221f;
+  --surface-2: #1f2824;
+  --surface-3: #26302b;
+  --line: #2b3530;
+  --line-2: #39453f;
+  --text: #f3ecd9;
+  --text-2: #b9c6bf;
+  --text-3: #7f8e87;
+  --brand: #a1b9b0;
+  --brand-hover: #b7ccc4;
+  --brand-ink: #131917;
+  --brand-soft: #24353a;
+  --lemon: #e4b922;
+  --lemon-hover: #efc63a;
+  --lemon-ink: #22302b;
   --blue: #6c9cf0;
-  --frame: #13233f;
-  --bar: #13233f;
+  --frame: #26302b;
+  --bar: #26302b;
   --navy: #1a2c55;
   --navy-2: #24407a;
   --sky-soft: #15242e;
@@ -1082,7 +1088,7 @@ button.evt { width: calc(100% + 16px); border: 0; background: none; font: inheri
 .post--photo .post__cover { margin: 0; border-radius: 14px; aspect-ratio: 4 / 3; }
 .post--photo .post__body { padding: 14px 12px 0; }
 .post--photo .post__title { margin-top: 0; }
-.post__chip { position: absolute; left: 12px; top: 12px; display: inline-flex; align-items: center; gap: 8px; max-width: calc(100% - 24px); padding: 4px 12px 4px 4px; border-radius: 999px; background: rgba(1, 17, 43, .55); color: #fff; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+.post__chip { position: absolute; left: 12px; top: 12px; display: inline-flex; align-items: center; gap: 8px; max-width: calc(100% - 24px); padding: 4px 12px 4px 4px; border-radius: 999px; background: rgba(34, 48, 43, .55); color: #fff; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
 .post__chip .av { width: 28px; height: 28px; font-size: 12px; }
 .post__chip b { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .post__chip small { font-size: 12px; opacity: .8; white-space: nowrap; }
@@ -1095,12 +1101,28 @@ button.evt { width: calc(100% + 16px); border: 0; background: none; font: inheri
 @media (max-width: 860px) {
   .tabbar {
     left: 12px; right: 12px; bottom: calc(10px + env(safe-area-inset-bottom)); padding: 6px; border: 0; border-radius: 22px;
-    background: var(--bar); box-shadow: 0 10px 30px rgba(1, 17, 43, .28);
+    background: var(--bar); box-shadow: 0 10px 30px rgba(34, 48, 43, .28);
   }
-  .tabbar a { padding: 7px 0 5px; border-radius: 16px; color: rgba(243, 237, 224, .55); transition: background-color .15s, color .15s; }
-  .tabbar a[aria-current="page"] { color: #f3ede0; background: rgba(243, 237, 224, .12); }
+  .tabbar a { padding: 7px 0 5px; border-radius: 16px; color: rgba(255, 251, 241, .55); transition: background-color .15s, color .15s; }
+  .tabbar a[aria-current="page"] { color: #fffbf1; background: rgba(255, 251, 241, .12); }
   .tabbar a[aria-current="page"]::before { content: none; }
   .main { padding-bottom: calc(110px + env(safe-area-inset-bottom)); }
 }
 @media (max-width: 560px) { .post__go { display: none !important; } }
 @media (min-width: 861px) { .post--photo .post__cover { aspect-ratio: 16 / 10; } }
+
+/* ═══ 둥근 글꼴: 나눔스퀘어라운드 (네이버 한글 글꼴 공식 주소) ═══ */
+@font-face { font-family: 'NanumSquareRound'; font-weight: 300; font-display: swap; src: url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundL.woff2) format('woff2'), url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundL.woff) format('woff'); }
+@font-face { font-family: 'NanumSquareRound'; font-weight: 400 500; font-display: swap; src: url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundR.woff2) format('woff2'), url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundR.woff) format('woff'); }
+@font-face { font-family: 'NanumSquareRound'; font-weight: 600 700; font-display: swap; src: url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundB.woff2) format('woff2'), url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundB.woff) format('woff'); }
+@font-face { font-family: 'NanumSquareRound'; font-weight: 800 900; font-display: swap; src: url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundEB.woff2) format('woff2'), url(https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquareRound/NanumSquareRoundEB.woff) format('woff'); }
+
+/* ═══ 레몬 포인트: 주요 버튼 · 오늘 · 새 글 ═══ */
+.btn--primary { background: var(--lemon); border-color: var(--lemon); color: var(--lemon-ink); }
+.btn--primary:hover { background: var(--lemon-hover); border-color: var(--lemon-hover); color: var(--lemon-ink); }
+.tag--new, .story__badge { background: var(--lemon); color: var(--lemon-ink); }
+.cal__d.is-today { background: var(--lemon); color: var(--lemon-ink); box-shadow: none; }
+.story__plus { background: var(--lemon); color: var(--lemon-ink); }
+.tabbar a[aria-current="page"] { color: var(--lemon) !important; }
+/* 둥근 글꼴은 획이 넓어서 큰 제목 자간을 조금만 좁힘 */
+.page-head h1, .detail__title, .cal-head h1, .welcome__title { letter-spacing: -0.02em; }

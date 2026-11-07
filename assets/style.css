@@ -990,3 +990,32 @@ body.locked .main > * { max-width: none; }
 .actionbar--center { justify-content: center; }
 .actionbar--center .btn { min-width: 220px; }
 @media (max-width: 860px) { .actionbar--center .btn { flex: 1; } }
+
+/* ═══ 기도제목 (읽기 좋게) ═══════════════════ */
+.psec { padding: 18px 20px 6px; }
+.psec__head { display: flex; align-items: center; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.psec__title { display: grid; line-height: 1.35; min-width: 0; }
+.psec__title b { font-size: 16.5px; letter-spacing: -0.03em; }
+.psec__title small { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-3); font-weight: 600; }
+.psec__title .tag { height: 20px; font-size: 11.5px; padding: 0 7px; }
+.psec__go { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; white-space: nowrap; }
+.psec__go .ic { width: 15px; height: 15px; }
+.prs { list-style: none; margin: 0; padding: 0; }
+.pr { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 12px; padding: 16px 0; }
+.pr + .pr { border-top: 1px dashed var(--line-2); }
+.pr--noav { grid-template-columns: minmax(0, 1fr); }
+.pr__head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
+.pr__head b { font-size: 15px; }
+.pr__date { font-size: 13px; color: var(--text-3); font-weight: 600; }
+.pr__for { display: inline-flex; align-items: center; gap: 6px; margin: 2px 0 8px; padding: 4px 11px 4px 9px; border-radius: 999px; background: var(--rose-soft); color: var(--rose-ink); font-size: 13.5px; }
+.pr__for .ic { width: 14px; height: 14px; }
+.pr__for b { font-weight: 750; }
+.pr__for small { font-size: 12.5px; opacity: .85; padding-left: 6px; border-left: 1px solid currentColor; }
+.pr__body {
+  margin: 0; font-size: 16px; line-height: 1.8; color: var(--text); white-space: pre-line; word-break: keep-all;
+  display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden;
+}
+.pr.is-open .pr__body { display: block; -webkit-line-clamp: unset; }
+.pr__more { margin-top: 4px; padding: 2px 0; border: 0; background: none; font-size: 13.5px; font-weight: 650; color: var(--brand); }
+.sec .prs .pr:first-child { padding-top: 4px; }
+@media (max-width: 560px) { .psec { padding: 16px 16px 4px; } .pr__body { font-size: 15.5px; } }

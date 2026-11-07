@@ -108,15 +108,22 @@
       .filter((s) => /^[가-힣]{2,5}$/.test(s) && !NOT_NAMES.has(s)))];
   }
   // 기도제목 한 줄: "- 김가람: 내용" 또는 "심윤서s - 백영주 (대학동기) : 내용"
+  // 세 가지 양식을 모두 읽음
+  //  · 앱/한 줄:   "- 김가람: 내용"  "심윤서s - 백영주 (대학동기) : 내용"   (순종부 등)
+  //  · 이름 머리줄: "▷최준식b" 다음 줄들에 "- 최승만 (큰 아버지) : 내용"       (사랑부 등)
   function prayersFrom(lines) {
     const out = [];
+    let who = '';
     for (const raw of lines) {
       const l = raw.trim();
       if (!l) continue;
-      const m = l.match(/^[-·•*]?\s*([가-힣]{2,5}[bsBS]?)\s*[:：\-–]\s*(.+)$/);
-      if (m) out.push({ name: cleanName(m[1]), text: m[2].trim() });
-      else if (out.length && !/^[-·•*]/.test(l)) out[out.length - 1].text += ' ' + l;
-      else out.push({ name: '', text: l.replace(/^[-·•*]\s*/, '') });
+      const head = l.match(/^[▷▶►▸]\s*([가-힣]{2,5})\s*[bsBS]?\s*[:：]?\s*$/) || l.match(/^([가-힣]{2,5})[bsBS]\s*[:：]?\s*$/);
+      if (head) { who = cleanName(head[1]); continue; }
+      if (who && /^[-–·•*]/.test(l)) { out.push({ name: who, text: l.replace(/^[-–·•*]\s*/, '').trim() }); continue; }
+      const m = l.match(/^[-·•*▷▶]?\s*([가-힣]{2,5}[bsBS]?)\s*[:：\-–]\s*(.+)$/);
+      if (m) { who = ''; out.push({ name: cleanName(m[1]), text: m[2].trim() }); continue; }
+      if (out.length && !/^[-–·•*]/.test(l)) out[out.length - 1].text += ' ' + l;
+      else out.push({ name: who, text: l.replace(/^[-–·•*]\s*/, '') });
     }
     return out;
   }
@@ -129,7 +136,7 @@
       .replace(/<br\s*\/?>/gi, '\n')
       .replace(/<\/(p|div|li|h[1-6]|tr)>/gi, '\n');
     const doc = new DOMParser().parseFromString(prepared, 'text/html');
-    return (doc.body.textContent || '').replace(/ /g, ' ').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    return (doc.body.textContent || '').replace(/[​-‍﻿]/g, '').replace(/ /g, ' ').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   }
   const SECTION_KEYS = [
     ['참석', 'people'], ['말씀', 'verse'], ['나눔', 'share'], ['기도', 'prayer'],
@@ -195,7 +202,7 @@
   /* ─── 게시글 불러오기 ────────────────────── */
   const state = {
     posts: null, source: '', error: '', loading: null, page: 0, hasMore: false,
-    q: '', month: '', dept: '', day: '', prayerMode: 'person',
+    q: '', month: '', dept: '', day: '', prayerMode: 'week',
   };
   const sortPosts = () => state.posts.sort((a, b) => (b.date?.getTime() || 0) - (a.date?.getTime() || 0));
 
@@ -725,8 +732,11 @@
   function summaryOf(p) {
     if (p.share) return p.share;
     if (p.verseNote) return p.verseNote;
+    // 게시판 양식 글은 첫 기도제목을 미리보기로 (예: "최준식 · 최승만 (큰 아버지): 11월 대집회…")
+    const pr = p.prayers.find((x) => x.name && x.text);
+    if (pr) { const s = splitPrayer(pr.text); return `${pr.name} · ${s.target ? `${s.target}: ` : ''}${s.body}`; }
     return p.text.split('\n').map((l) => l.trim()).filter((l) => l &&
-      !/^[[■▶●◆\-·•*]/.test(l) && !(l.length < 40 && parseDate(l)) && !/^\d+\.\s/.test(l))
+      !/^[[■▶▷►●◆\-·•*]/.test(l) && !(l.length < 40 && parseDate(l)) && !/^\d+\.\s/.test(l))
       .join(' ').slice(0, 160);
   }
   function findSnippet(text, q) {
@@ -751,7 +761,7 @@
       people: () => people,
       verse: () => sec('말씀', 'quote', p.verse || p.verseNote ? `<blockquote class="verse">${p.verse ? `<b>${esc(p.verse)}</b>` : ''}${para(p.verseNote)}</blockquote>` : ''),
       share: () => sec('나눔', 'msg', para(p.share)),
-      prayer: () => sec('기도제목', 'heart', p.prayers.length ? `<ul class="prayers">${p.prayers.map((x) => `<li>${x.name ? `<b>${esc(x.name)}</b>` : ''}<span>${esc(x.text)}</span></li>`).join('')}</ul>` : ''),
+      prayer: () => sec('기도제목', 'heart', p.prayers.length ? `<ul class="prs">${p.prayers.map((x) => prayerItem(x)).join('')}</ul>` : ''),
       etc: () => sec('기타', 'pin', para(p.etc)),
       writer: () => '', date: () => '',
     };
@@ -786,6 +796,7 @@
         ${newer ? `<a class="pager__next" href="#/post/${encodeURIComponent(newer.id)}"><span><small>다음 글</small>${esc(newer.title)}</span>${icon('right')}</a>` : ''}
       </nav>` : ''}`;
     $app.querySelectorAll('[data-photo]').forEach((b) => { b.onclick = () => lightbox(p.photos, Number(b.dataset.photo)); });
+    bindPrayerMore($app);
     drawComments(p);
   }
 
@@ -872,6 +883,49 @@
     };
   }
 
+  /* ─── 기도제목 읽기 좋게 ───
+   * "백영주 (대학동기) : 내용" → 누구를 위한 기도인지(백영주 · 대학동기)를 따로 보여주고 내용은 넉넉하게
+   */
+  // "곽윤례 (큰 어머님), 나상규 (큰 아버지) : 내용" → 대상 "곽윤례 (큰 어머님), 나상규 (큰 아버지)" + 내용
+  function splitPrayer(text) {
+    const t = String(text || '').trim();
+    const i = t.search(/[:：]/);
+    if (i > 0 && i <= 48) {
+      const before = t.slice(0, i).trim().replace(/\s+,/g, ',');
+      const body = t.slice(i + 1).trim();
+      // 문장이 아니라 이름(관계) 모음일 때만 대상으로 봄
+      if (body.length >= 2 && /[가-힣A-Za-z]/.test(before) && !/[.!?。]|습니다|해요|있도록|위해/.test(before) && before.split(/\s+/).length <= 8) {
+        return { target: before, body };
+      }
+    }
+    return { target: '', body: t };
+  }
+  // 대상 글씨: 괄호 속 관계는 작게
+  const targetHtml = (s, q) => highlight(s, q).replace(/\s*[(（]([^)）]{1,20})[)）]/g, ' <small>$1</small>');
+  function prayerItem(x, q = '', { showName = true, showDate = false } = {}) {
+    const s = splitPrayer(x.text);
+    return `<li class="pr${showName ? '' : ' pr--noav'}">
+      ${showName ? avatar(x.name || '·', '', 'sm') : ''}
+      <div class="pr__main">
+        ${showName || (showDate && x.date) ? `<div class="pr__head">${showName ? `<b>${highlight(x.name || '이름 없음', q)}</b>` : ''}${showDate && x.date ? `<span class="pr__date">${esc(fullDate(x.date))}</span>` : ''}</div>` : ''}
+        ${s.target ? `<span class="pr__for">${icon('heart')}<span>${targetHtml(s.target, q)}</span></span>` : ''}
+        <p class="pr__body">${highlight(s.body, q)}</p>
+        <button type="button" class="pr__more" hidden>더 보기</button>
+      </div>
+    </li>`;
+  }
+  // 긴 기도제목은 여섯 줄까지만 보이고 "더 보기"
+  function bindPrayerMore(root) {
+    root.querySelectorAll('.pr').forEach((li) => {
+      const p = li.querySelector('.pr__body');
+      const b = li.querySelector('.pr__more');
+      if (p.scrollHeight > p.clientHeight + 2) {
+        b.hidden = false;
+        b.onclick = () => { const open = li.classList.toggle('is-open'); b.textContent = open ? '접기' : '더 보기'; };
+      }
+    });
+  }
+
   /* ─── 화면: 기도제목 ─── */
   async function viewPrayers() {
     $app.innerHTML = `
@@ -893,7 +947,7 @@
     const $mode = document.getElementById('pmode');
     let q = '';
     const drawMode = () => {
-      $mode.innerHTML = [['person', '사람별'], ['week', '주차별']]
+      $mode.innerHTML = [['week', '모임별'], ['person', '사람별']]
         .map(([k, l]) => `<button type="button" data-k="${k}" aria-pressed="${state.prayerMode === k}">${l}</button>`).join('');
     };
     $mode.onclick = (e) => { const b = e.target.closest('[data-k]'); if (b) { state.prayerMode = b.dataset.k; drawMode(); draw(); } };
@@ -902,7 +956,7 @@
     draw();
 
     function draw() {
-      const items = posts.filter(inDept).flatMap((p) => p.prayers.map((x) => ({ ...x, date: p.date, postId: p.id })));
+      const items = posts.filter(inDept).flatMap((p) => p.prayers.map((x) => ({ ...x, date: p.date, postId: p.id, dept: p.dept })));
       const ql = q.toLowerCase();
       const rows = items.filter((x) => !ql || (x.name + ' ' + x.text).toLowerCase().includes(ql));
       const $l = document.getElementById('plist');
@@ -912,19 +966,25 @@
           : emptyState({ ic: 'heart', title: '아직 모인 기도제목이 없어요', desc: `최근 교제록 ${C.board.bodiesToLoad}개에서 모아요` });
         return;
       }
+      const byPerson = state.prayerMode === 'person';
       const groups = new Map();
       for (const x of rows) {
-        const key = state.prayerMode === 'person' ? (x.name || '이름 없음') : (x.date ? ymd(x.date) : '날짜 없음');
+        // 주차별은 교제록 한 편(모임 하나)씩, 사람별은 이름으로 묶음
+        const key = byPerson ? (x.name || '이름 없음') : x.postId;
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(x);
       }
       $l.innerHTML = `<div class="pgrid">${[...groups].map(([key, list]) => {
-        const head = state.prayerMode === 'person'
-          ? `${avatar(key, '', 'sm')}<b>${highlight(key, q)}</b><small>${list.length}개</small>`
-          : `<span class="datebox"><b>${list[0].date ? list[0].date.getDate() : '·'}</b><small>${list[0].date ? `${list[0].date.getMonth() + 1}월` : ''}</small></span><b>${list[0].date ? fullDate(list[0].date) : key}</b><small>${list.length}명</small>`;
-        return `<section class="card pcard"><header>${head}</header><ul>${list.map((x) => `
-          <li><a href="#/post/${encodeURIComponent(x.postId)}"><span class="pcard__when">${state.prayerMode === 'person' ? (x.date ? `${x.date.getMonth() + 1}.${x.date.getDate()}` : '') : esc(x.name)}</span><span>${highlight(x.text, q)}</span></a></li>`).join('')}</ul></section>`;
+        const f = list[0];
+        const head = byPerson
+          ? `${avatar(key, '', 'md')}<div class="psec__title"><b>${highlight(key, q)}</b><small>기도제목 ${list.length}개</small></div>`
+          : `<span class="datebox"><b>${f.date ? f.date.getDate() : '·'}</b><small>${f.date ? `${f.date.getMonth() + 1}월` : ''}</small></span>
+             <div class="psec__title"><b>${f.date ? esc(fullDate(f.date)) : '날짜 없음'}</b><small>${f.dept ? `${tag(f.dept)} ` : ''}${list.length}명</small></div>
+             <a class="link-btn psec__go" href="#/post/${encodeURIComponent(f.postId)}">교제록${icon('right')}</a>`;
+        return `<section class="card psec"><header class="psec__head">${head}</header>
+          <ul class="prs">${list.map((x) => prayerItem(x, q, { showName: !byPerson, showDate: byPerson })).join('')}</ul></section>`;
       }).join('')}</div>`;
+      bindPrayerMore($l);
     }
   }
 

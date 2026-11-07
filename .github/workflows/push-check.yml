@@ -1,0 +1,24 @@
+# 새 글 알림: 10분마다 앱 서버를 깨우고, 서버는 지난 확인 뒤 50분이 지났을 때만 실제로 새 글을 확인해요.
+# (GitHub 예약 작업은 10분 단위로만 고르기 쉬워서, 50분 간격은 서버가 지켜요)
+# 받는 사람이 많으면 서버가 40명씩 나눠 보내므로, "more": true 인 동안 이어서 불러요.
+name: 새 글 알림 확인
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 새 글 확인하고 알림 보내기
+        run: |
+          for i in $(seq 1 30); do
+            out=$(curl -fsS -X POST https://young-adult.pages.dev/api/jbch -H 'Content-Type: application/json' -d '{"api":"push_run"}')
+            echo "$out"
+            echo "$out" | grep -q '"more":true' || break
+          done

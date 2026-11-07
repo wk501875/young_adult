@@ -1138,3 +1138,9 @@ button.evt { width: calc(100% + 16px); border: 0; background: none; font: inheri
 /* 앨범 새 글 딱지 */
 .alb__pic { position: relative; }
 .alb__new { position: absolute; left: 8px; top: 8px; z-index: 1; }
+
+/* 로고: 십자가 칸 대신 우리 교회당 그림 (배경 지움). 흰 십자가가 밝은 바탕에 묻히지 않게 아주 얇은 테두리 그림자 */
+img.mark { width: auto; height: 36px; border-radius: 0; background: none; box-shadow: none; object-fit: contain; filter: drop-shadow(0 0 .7px rgba(15, 31, 61, .6)); }
+[data-theme="dark"] img.mark { filter: drop-shadow(0 0 .7px rgba(255, 255, 255, .5)); }
+@media (max-width: 860px) { img.mark { height: 30px; } }
+.login__brand img.mark { height: 72px; margin: 0 auto 14px; box-shadow: none; }

@@ -1380,6 +1380,70 @@
   }
 
   /* ─── 화면: 내 정보 ─── */
+  /* ─── 휴대폰 알림 (서비스 워커 + Web Push) ───
+   * 아이폰은 Safari '홈 화면에 추가'로 연 앱에서만 알림을 받을 수 있음 */
+  const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const pushCapable = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  let swReg = null;
+  async function swReady() {
+    if (!('serviceWorker' in navigator)) return null;
+    if (!swReg) swReg = await navigator.serviceWorker.register('/sw.js').catch(() => null);
+    return swReg;
+  }
+  const keyBytes = (s) => { const b = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4)); return Uint8Array.from(b, (c) => c.charCodeAt(0)); };
+  async function pushState() {
+    if (isIOS() && !isStandalone()) return 'ios-install';
+    if (!pushCapable()) return 'unsupported';
+    if (Notification.permission === 'denied') return 'denied';
+    const reg = await swReady();
+    const sub = await reg?.pushManager.getSubscription().catch(() => null);
+    return sub ? 'on' : 'off';
+  }
+  async function pushOn() {
+    if ((await Notification.requestPermission()) !== 'granted') { toast('알림이 허용되지 않았어요', { tone: 'error' }); return; }
+    const k = await callApi('push_key');
+    if (k.status !== 'ok') { toast(`알림을 켜지 못했어요: ${errText(k)}`, { tone: 'error' }); return; }
+    const reg = await swReady();
+    await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    try {
+      if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(k.result) });
+    } catch { toast('이 기기에서는 알림을 켤 수 없어요', { tone: 'error' }); return; }
+    const r = await callApi('push_sub', { sub: sub.toJSON() });
+    if (r.status !== 'ok') { toast(`알림을 켜지 못했어요: ${errText(r)}`, { tone: 'error' }); return; }
+    toast('알림을 켰어요. 새 글이 올라오면 알려 드릴게요');
+  }
+  async function pushOff() {
+    const reg = await swReady();
+    const sub = await reg?.pushManager.getSubscription();
+    if (sub) { await callApi('push_unsub', { sub: { endpoint: sub.endpoint } }); await sub.unsubscribe().catch(() => {}); }
+    toast('알림을 껐어요');
+  }
+  async function drawPushCard() {
+    const $b = document.getElementById('pushBtn');
+    const $h = document.getElementById('pushHint');
+    if (!$b) return;
+    const st = await pushState();
+    const HINT = {
+      on: '알림을 받고 있어요 · 새 글은 50분마다 확인해요',
+      off: '교제록·포토스토리·앨범이 올라오면 휴대폰으로 알려 드려요',
+      denied: '이 기기에서 알림을 막아 두었어요. 브라우저 설정에서 이 사이트 알림을 허용해 주세요',
+      'ios-install': '아이폰은 Safari 아래 공유 버튼 → ‘홈 화면에 추가’를 누른 뒤, 홈 화면의 앱으로 열어야 알림을 받을 수 있어요',
+      unsupported: '이 브라우저는 알림을 지원하지 않아요',
+    };
+    $h.textContent = HINT[st];
+    $b.hidden = !['on', 'off'].includes(st);
+    $b.disabled = false;
+    $b.className = st === 'off' ? 'btn btn--primary btn--sm' : 'btn btn--sm';
+    $b.textContent = st === 'on' ? '알림 끄기' : '알림 받기';
+    $b.onclick = async () => {
+      $b.disabled = true; $b.textContent = '잠시만요';
+      if (st === 'on') await pushOff(); else await pushOn();
+      drawPushCard();
+    };
+  }
+
   async function viewSettings() {
     const B = C.board;
     const SAMPLES = {
@@ -1403,6 +1467,10 @@
           ${[['light', '밝게'], ['dark', '어둡게'], ['system', '기기 설정']].map(([k, l]) => `<button type="button" data-t="${k}" aria-pressed="${store.get('theme', 'light') === k}">${l}</button>`).join('')}
         </div>
       </section>
+      <section class="card setting" id="pushCard">
+        <span><b>새 글 알림</b><small id="pushHint">교제록·포토스토리·앨범이 올라오면 휴대폰으로 알려 드려요</small></span>
+        <button type="button" class="btn btn--sm" id="pushBtn" disabled>확인 중</button>
+      </section>
       <div class="list-card card">
         ${isAdmin() ? `<a href="#/admin">${icon('users')}<span>관리 · 부서와 부서 관리자</span>${icon('right', 'ic--end')}</a>
         <a href="#/attendance">${icon('chart')}<span>참석 흐름</span>${icon('right', 'ic--end')}</a>` : ''}
@@ -1425,6 +1493,7 @@
         </div>
       </details>` : ''}`;
 
+    drawPushCard();
     document.getElementById('themePick').onclick = (e) => {
       const b = e.target.closest('[data-t]');
       if (!b) return;
@@ -2312,7 +2381,7 @@
     ...(isAdmin() ? [['attendance', '#/attendance', '참석 흐름', 'chart'], ['admin', '#/admin', '관리', 'users']] : []),
     ['settings', '#/settings', '내 정보', 'user'],
   ];
-  const brandMark = '<span class="mark" aria-hidden="true"></span>';
+  const brandMark = '<img class="mark" src="/assets/church-mark.png" alt="" aria-hidden="true" width="52" height="36">';
   const newCount = () => (state.posts || []).filter(isNew).length;
   let chromeTab = 'list';
   function renderChrome(tab) {
@@ -2490,7 +2559,6 @@
         <div class="login__panel">
           <div class="login__inner">
             <div class="login__brand">
-              <span class="mark mark--lg" aria-hidden="true"></span>
               <h1>${esc(APP)}</h1>
               <p>교제록과 기도제목을 함께 나눠요</p>
             </div>
@@ -2629,6 +2697,7 @@
   });
 
   route();
+  if (auth.hash) swReady(); // 알림용 서비스 워커 (알림을 켠 기기에서 계속 받으려면 등록돼 있어야 함)
 
   // 로그인돼 있으면 이름·관리자 여부를 새로 받아 둠 (관리자 목록이 바뀌어도 반영되도록)
   if (auth.hash) {

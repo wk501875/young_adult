@@ -14,7 +14,8 @@ const WRITE_BOARDS = ['2122'];
 // 중계를 허락한 API만 등록 (여기 없는 주소는 호출 불가)
 const APIS = {
   login:         { path: '/in/login.php' },                              // Userid, password → hash
-  me:            { path: '/in/member_json.php', needHash: true },        // 로그인한 사람 이름 확인
+  me:            { path: '/in/member_json.php', needHash: true },        // 로그인한 사람 이름·관리자 여부
+  rosters:       { path: '', needHash: true },                           // 부서별 명단 (환경 변수 ROSTERS)
   member_search: { path: '/in/load_member_search.php', needHash: true },
   board_post:    { path: '/in/load_boardb_post.php' },                   // 회원 전용 게시판은 hash 필요
   board_latest:  { path: '/in/load_boardb_latest.php' },
@@ -89,6 +90,9 @@ async function login(env, p) {
   return { status: 'error', result: msg || '아이디나 비밀번호를 확인해 주세요' };
 }
 
+// 관리자 아이디 목록: Cloudflare 환경 변수 ADMINS (쉼표로 구분, 예: "wk5018,hong123")
+const adminsOf = (env) => String(env.ADMINS || '').split(/[\s,]+/).map((s) => s.trim().toLowerCase()).filter(Boolean);
+
 // 내 정보: 화면에 필요한 이름만 돌려줍니다 (주소·연락처 등은 버림)
 async function me(env, p) {
   const r = await relay(APIS.me.path, {
@@ -97,7 +101,29 @@ async function me(env, p) {
   });
   const u = r && r.result && typeof r.result === 'object' ? r.result : null;
   if (r.status !== 'ok' || !u) return { status: r.status || 'error', result: typeof r.result === 'string' ? r.result : '회원 정보를 찾지 못했습니다' };
-  return { status: 'ok', result: { userid: u.userid || '', name: u.username || u.name || '', sex: u.sex || '', church: u.churchname || '' } };
+  const userid = String(u.userid || '');
+  return {
+    status: 'ok',
+    result: {
+      userid, name: u.username || u.name || '', sex: u.sex || '', church: u.churchname || '',
+      admin: adminsOf(env).includes(userid.toLowerCase()),
+    },
+  };
+}
+
+// 부서별 명단: Cloudflare 환경 변수 ROSTERS (JSON). 저장소가 공개라 코드에는 넣지 않습니다.
+// 예: {"순종부":["김민수b","이다정s"],"사랑부":["…"]}  — 로그인한 회원에게만 돌려줌
+async function rosters(env, p) {
+  const who = await me(env, p);
+  if (who.status !== 'ok') return who;
+  if (!env.ROSTERS) return { status: 'ok', result: {} };
+  let data;
+  try { data = JSON.parse(env.ROSTERS); } catch { return { status: 'error', result: 'ROSTERS 환경 변수 JSON 모양이 올바르지 않습니다' }; }
+  const out = {};
+  for (const [dept, names] of Object.entries(data || {})) {
+    if (Array.isArray(names)) out[String(dept)] = names.map((n) => String(n).trim()).filter(Boolean);
+  }
+  return { status: 'ok', result: out };
 }
 
 async function upload(env, request) {
@@ -134,6 +160,7 @@ export async function onRequestPost({ request, env }) {
   if (api === 'login') return json(await login(env, clean));
   if (spec.needHash && !clean.hash) return json({ status: 'error', result: 'hash가 필요합니다' });
   if (api === 'me') return json(await me(env, clean));
+  if (api === 'rosters') return json(await rosters(env, clean));
   if (spec.write && !WRITE_BOARDS.includes(clean.boardId)) return json({ status: 'error', result: '글을 쓸 수 없는 게시판입니다' });
 
   return json(await relay(spec.path, {

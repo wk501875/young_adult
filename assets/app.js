@@ -1780,12 +1780,15 @@
       inapp: '카카오톡 같은 앱 안에서 열린 화면이라 알림을 받을 수 없어요. 메뉴의 ‘다른 브라우저로 열기’로 크롬이나 Safari에서 열어 주세요',
     };
     $h.textContent = HINT[st];
+    // 알림이 안 되는 기기를 찾으려고, 내 정보를 열 때 이 기기의 알림 상태를 남김 (기기마다 하루 한 번)
+    if (st !== 'on' && Date.now() - store.get('pushDiagAt', 0) > 86400e3) { store.set('pushDiagAt', Date.now()); pushDiag('state', `${st} perm=${'Notification' in window ? Notification.permission : 'none'} sw=${'serviceWorker' in navigator} pm=${'PushManager' in window}`); }
     $b.hidden = !['on', 'off'].includes(st);
     $b.disabled = false;
     $b.className = st === 'off' ? 'btn btn--primary btn--sm' : 'btn btn--sm';
     $b.textContent = st === 'on' ? '알림 끄기' : '알림 받기';
     $b.onclick = async () => {
       $b.disabled = true; $b.textContent = '잠시만요';
+      pushDiag('click', `${st} perm=${Notification.permission}`);
       try { if (st === 'on') await pushOff(); else await pushOn(); } catch { /* 안내는 pushOn이 띄움 */ }
       drawPushCard();
     };

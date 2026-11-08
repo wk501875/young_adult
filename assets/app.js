@@ -366,7 +366,26 @@
 
   /* ─── 작은 도우미 ─── */
   const hashOf = (s) => { let h = 0; for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h; };
-  const tone = (s) => ['blue', 'sky', 'sun', 'green', 'rose'][hashOf(s) % 5];
+  // 부서는 정해진 부서 색(config.deptColors), 그 밖(사람 이름 아바타 등)은 이름으로 고른 색
+  const DEPT_COLORS = C.deptColors || {};
+  const DEPT_SLUG = Object.fromEntries(Object.keys(DEPT_COLORS).map((d, i) => [d, `d${i}`]));
+  const tone = (s) => DEPT_SLUG[s] || ['blue', 'sky', 'sun', 'green', 'rose'][hashOf(s) % 5];
+  // 부서 색 CSS를 설정에서 만들어 붙임 (부서 칩·점·태그·달력 막대·부서 카드 모두 같은 색)
+  (function deptColorStyles() {
+    const css = Object.entries(DEPT_COLORS).map(([d, c]) => {
+      const k = DEPT_SLUG[d];
+      return `.t-${k}{background:color-mix(in srgb,${c.base} 45%,var(--surface));color:${c.ink}}
+[data-theme="dark"] .t-${k}{background:color-mix(in srgb,${c.strong} 22%,var(--surface));color:${c.base}}
+.c-${k}{color:${c.ink}}[data-theme="dark"] .c-${k}{color:${c.base}}
+.cal__dots .t-${k},.evt__bar.t-${k},.ddot.t-${k}{background:${c.strong}}
+.story.t-${k}{color:${c.strong}}
+.ev-${k}{--ev:${c.strong};--ev-soft:color-mix(in srgb,${c.base} 40%,transparent)}`;
+    }).join('\n');
+    const el = document.createElement('style');
+    el.id = 'deptColors';
+    el.textContent = css;
+    document.head.appendChild(el);
+  })();
   function avatar(name, url, size = 'md') {
     const n = String(name || '').trim();
     const initial = esc(n ? (/^[가-힣]/.test(n) ? n[0] : n[0].toUpperCase()) : '·');

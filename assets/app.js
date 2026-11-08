@@ -1614,44 +1614,78 @@
     return swReg;
   }
   const keyBytes = (s) => { const b = atob(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (s.length % 4)) % 4)); return Uint8Array.from(b, (c) => c.charCodeAt(0)); };
+  // 카카오톡·인스타·네이버 등 앱 안에서 열린 화면은 알림을 쓸 수 없음
+  const isInApp = () => /KAKAOTALK|Instagram|NAVER\(inapp|FBAN|FBAV|Line\/|DaumApps|everytimeApp/i.test(navigator.userAgent);
+  // 알림 켜기 단계가 끝없이 기다리지 않게 시간 제한 (어느 단계에서 멈췄는지 알려 주려고 이름을 붙임)
+  const withTimeout = (p, ms, step) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(Object.assign(new Error('timeout'), { step })), ms))]);
+  async function readyReg() {
+    const reg = await swReady();
+    if (!reg) throw Object.assign(new Error('no-sw'), { step: 'sw' });
+    if (reg.active) return reg;
+    await withTimeout(navigator.serviceWorker.ready, 10000, 'sw');
+    return reg;
+  }
   async function pushState() {
+    if (isInApp()) return 'inapp';
     if (isIOS() && !isStandalone()) return 'ios-install';
     if (!pushCapable()) return 'unsupported';
     if (Notification.permission === 'denied') return 'denied';
     const reg = await swReady();
-    const sub = await reg?.pushManager.getSubscription().catch(() => null);
+    const sub = reg ? await withTimeout(reg.pushManager.getSubscription(), 8000, 'subscribe').catch(() => null) : null;
     return sub ? 'on' : 'off';
   }
+  // 알림 켜기가 안 됐을 때: 어느 단계였는지에 따라 다른 안내
+  const PUSH_FAIL = {
+    perm: '휴대폰에서 알림이 허용되지 않았어요. 다시 누르고 나오는 창에서 <b>허용</b>을 눌러 주세요.',
+    denied: '이 사이트 알림이 막혀 있어요. 크롬은 주소창 왼쪽 아이콘(또는 ⋮ → 설정 → 사이트 설정 → 알림)에서 <b>young-adult.pages.dev</b>를 <b>허용</b>으로 바꾼 뒤 다시 눌러 주세요. 아이폰은 설정 → 알림 → 일산교회 청년회에서 켜 주세요.',
+    net: '인터넷 연결이 불안정해서 알림을 등록하지 못했어요. 잠시 뒤 다시 눌러 주세요.',
+    sw: '알림 기능을 준비하지 못했어요. 이 화면을 <b>새로고침</b>한 뒤 다시 눌러 주세요.',
+    subscribe: '이 브라우저에서 알림 등록이 멈췄어요. 휴대폰 기본 인터넷(삼성 인터넷 등)으로 열었다면 <b>크롬</b>으로 열어서 다시 해 주세요. 아이폰은 <b>홈 화면에 추가한 앱</b>에서 해 주세요.',
+  };
+  function pushFailed(step, detail = '') {
+    openSheet({
+      title: '알림을 켜지 못했어요',
+      body: `<p class="sheet__text">${PUSH_FAIL[step] || PUSH_FAIL.net}</p>${detail ? `<p class="hint">${esc(detail)}</p>` : ''}`,
+      actions: [{ label: '알겠어요', value: true, kind: 'primary' }],
+    });
+  }
   async function pushOn() {
-    if ((await Notification.requestPermission()) !== 'granted') { toast('알림이 허용되지 않았어요', { tone: 'error' }); return; }
-    const k = await callApi('push_key');
-    if (k.status !== 'ok') { toast(`알림을 켜지 못했어요: ${errText(k)}`, { tone: 'error' }); return; }
-    const reg = await swReady();
-    await navigator.serviceWorker.ready;
-    let sub = await reg.pushManager.getSubscription();
     try {
-      if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(k.result) });
-    } catch { toast('이 기기에서는 알림을 켤 수 없어요', { tone: 'error' }); return; }
-    const r = await callApi('push_sub', { sub: sub.toJSON() });
-    if (r.status !== 'ok') { toast(`알림을 켜지 못했어요: ${errText(r)}`, { tone: 'error' }); return; }
-    store.set('pushSubV', 2);
-    toast('알림을 켰어요. 지금 시험 알림을 하나 보내 드려요');
-    await testPush();
-    return true;
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') { pushFailed(perm === 'denied' ? 'denied' : 'perm'); return false; }
+      const k = await withTimeout(callApi('push_key'), 12000, 'net');
+      if (k.status !== 'ok') { pushFailed('net', errText(k)); return false; }
+      const reg = await readyReg();
+      const key = keyBytes(k.result);
+      let sub = await withTimeout(reg.pushManager.getSubscription(), 8000, 'subscribe');
+      // 예전 열쇠로 등록된 구독이면 지우고 새로 (열쇠가 다르면 등록이 실패함)
+      const oldKey = sub?.options?.applicationServerKey;
+      if (sub && oldKey && new Uint8Array(oldKey).join() !== key.join()) { await sub.unsubscribe().catch(() => {}); sub = null; }
+      if (!sub) sub = await withTimeout(reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }), 20000, 'subscribe');
+      const r = await withTimeout(callApi('push_sub', { sub: sub.toJSON() }), 12000, 'net');
+      if (r.status !== 'ok') { pushFailed('net', errText(r)); return false; }
+      store.set('pushSubV', 2);
+      toast('알림을 켰어요. 지금 시험 알림을 하나 보내 드려요');
+      testPush();
+      return true;
+    } catch (e) {
+      pushFailed(e?.step || 'subscribe', e?.step ? '' : String(e?.message || e || ''));
+      return false;
+    }
   }
   // 알림이 어떻게 오는지 바로 보여 주기 (이 기기에서만, 서버를 거치지 않음)
   async function testPush() {
-    const reg = await swReady();
-    if (!reg || Notification.permission !== 'granted') return;
-    await navigator.serviceWorker.ready;
+    if (Notification.permission !== 'granted') return;
+    const reg = await readyReg().catch(() => null);
+    if (!reg) return;
     await reg.showNotification('알림이 켜졌어요', {
       body: '새 교제록·포토스토리·앨범·번개가 올라오면 이렇게 알려 드려요. 누르면 그 글로 바로 가요.',
       icon: '/assets/icon-192.png', badge: '/assets/icon-192.png', tag: 'ya-test', data: { url: '/#/settings' },
     }).catch(() => {});
   }
   async function pushOff() {
-    const reg = await swReady();
-    const sub = await reg?.pushManager.getSubscription();
+    const reg = await readyReg().catch(() => null);
+    const sub = reg && await withTimeout(reg.pushManager.getSubscription(), 8000, 'subscribe').catch(() => null);
     if (sub) { await callApi('push_unsub', { sub: { endpoint: sub.endpoint } }); await sub.unsubscribe().catch(() => {}); }
     toast('알림을 껐어요');
   }
@@ -1663,24 +1697,37 @@
     const st = await pushState();
     // 예전에 켠 기기: 형제/자매 정보가 함께 저장되도록 한 번만 다시 등록 (번개 알림용)
     if (st === 'on' && store.get('pushSubV', 0) < 2) {
-      const sub = await (await swReady())?.pushManager.getSubscription();
+      const reg = await readyReg().catch(() => null);
+      const sub = reg && await withTimeout(reg.pushManager.getSubscription(), 8000, 'subscribe').catch(() => null);
       if (sub && (await callApi('push_sub', { sub: sub.toJSON() })).status === 'ok') store.set('pushSubV', 2);
       return;
     }
+    // 이미 허용했는데 구독만 빠진 기기: 조용히 다시 켬 (멈추면 그냥 넘어감)
     if (st === 'off' && Notification.permission === 'granted') {
-      const k = await callApi('push_key');
-      const reg = await swReady();
-      if (k.status !== 'ok' || !reg) return;
-      await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(k.result) }).catch(() => null);
-      if (sub) callApi('push_sub', { sub: sub.toJSON() });
+      try {
+        const k = await withTimeout(callApi('push_key'), 12000, 'net');
+        if (k.status !== 'ok') return;
+        const reg = await readyReg();
+        const sub = await withTimeout(reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(k.result) }), 20000, 'subscribe');
+        if (sub && (await callApi('push_sub', { sub: sub.toJSON() })).status === 'ok') store.set('pushSubV', 2);
+      } catch { /* 다음에 다시 */ }
       return;
     }
     const later = store.get('pushAskLater', 0);
-    if (!['off', 'ios-install'].includes(st) || Date.now() < later) return;
+    if (!['off', 'ios-install', 'inapp'].includes(st) || Date.now() < later) return;
     if (document.querySelector('.sheet-wrap, .coach')) return; // 다른 안내가 떠 있으면 다음에
     // 한 번 띄웠으면 무엇을 고르든(닫거나 새로고침해도) 사흘 동안은 다시 안 띄움
     store.set('pushAskLater', Date.now() + 3 * 86400e3);
+    if (st === 'inapp') {
+      store.set('pushAskLater', Date.now() + 7 * 86400e3);
+      await openSheet({
+        title: '새 글 알림 받기',
+        body: `<p class="sheet__text">카카오톡 같은 앱 안에서 열린 화면에서는 알림을 받을 수 없어요.</p>
+          <ol class="push-steps"><li>화면 오른쪽 위(또는 아래)의 <b>메뉴(⋮ 또는 …)</b>를 눌러요</li><li><b>‘다른 브라우저로 열기’</b>를 눌러요 (안드로이드는 크롬, 아이폰은 Safari)</li><li>거기서 다시 들어오면 알림을 켜는 창이 나와요</li></ol>`,
+        actions: [{ label: '알겠어요', value: true, kind: 'primary' }],
+      }).result;
+      return;
+    }
     if (st === 'ios-install') {
       store.set('pushAskLater', Date.now() + 14 * 86400e3);
       await openSheet({
@@ -1697,17 +1744,8 @@
       actions: [{ label: '나중에', value: false }, { label: '알림 받기', value: true, kind: 'primary', icon: 'bell' }],
     }).result;
     if (!yes) { store.set('pushAskLater', Date.now() + 7 * 86400e3); return; }
-    const ok = await pushOn();
+    await pushOn(); // 안 되면 pushOn이 이유를 알려 줌
     if (Notification.permission === 'denied') store.set('pushAskLater', Date.now() + 365 * 86400e3);
-    if (!ok) {
-      openSheet({
-        title: '알림을 켜지 못했어요',
-        body: Notification.permission === 'denied'
-          ? '<p class="sheet__text">휴대폰에서 이 사이트 알림이 막혀 있어요. 브라우저 설정 → 사이트 설정 → 알림에서 <b>young-adult.pages.dev</b>를 허용으로 바꾼 뒤, <b>내 정보 → 새 글 알림</b>에서 다시 켜 주세요.</p>'
-          : '<p class="sheet__text">허용 창이 닫혔거나 이 기기에서 알림을 쓸 수 없어요. <b>내 정보 → 새 글 알림</b>에서 언제든 다시 켤 수 있어요.</p>',
-        actions: [{ label: '알겠어요', value: true, kind: 'primary' }],
-      });
-    }
   }
   async function drawPushCard() {
     const $b = document.getElementById('pushBtn');
@@ -1720,6 +1758,7 @@
       denied: '이 기기에서 알림을 막아 두었어요. 브라우저 설정에서 이 사이트 알림을 허용해 주세요',
       'ios-install': '아이폰은 Safari 아래 공유 버튼 → ‘홈 화면에 추가’를 누른 뒤, 홈 화면의 앱으로 열어야 알림을 받을 수 있어요',
       unsupported: '이 브라우저는 알림을 지원하지 않아요',
+      inapp: '카카오톡 같은 앱 안에서 열린 화면이라 알림을 받을 수 없어요. 메뉴의 ‘다른 브라우저로 열기’로 크롬이나 Safari에서 열어 주세요',
     };
     $h.textContent = HINT[st];
     $b.hidden = !['on', 'off'].includes(st);
@@ -1728,7 +1767,7 @@
     $b.textContent = st === 'on' ? '알림 끄기' : '알림 받기';
     $b.onclick = async () => {
       $b.disabled = true; $b.textContent = '잠시만요';
-      if (st === 'on') await pushOff(); else await pushOn();
+      try { if (st === 'on') await pushOff(); else await pushOn(); } catch { /* 안내는 pushOn이 띄움 */ }
       drawPushCard();
     };
     // 켜져 있으면 상태를 눈에 띄게 + 시험 알림 버튼

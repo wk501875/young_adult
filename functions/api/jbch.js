@@ -731,6 +731,21 @@ async function push(env, api, p, raw) {
     return { status: 'ok', result: (bg && (!news || bg.at > news.at)) ? bg : news };
   }
   if (api === 'push_run') return pushRun(env);
+  // 알림 켜기 실패 기록 (로그인한 회원만 남길 수 있고, 최고 관리자만 볼 수 있음. 최근 50개만, 30일 뒤 자동 삭제)
+  if (api === 'push_diag' || api === 'push_diag_list') {
+    if (!p.hash) return { status: 'error', result: 'hash가 필요합니다' };
+    const who = await whoAmI(env, p.hash);
+    if (who.error) return who.error;
+    if (api === 'push_diag') {
+      const rec = { at: new Date().toISOString(), user: who.u.userid, step: String(raw.step || '').slice(0, 20), detail: String(raw.detail || '').slice(0, 120), ua: String(raw.ua || '').slice(0, 200), standalone: raw.standalone === '1' };
+      await env.CAL.put(`pdiag:${Date.now()}`, JSON.stringify(rec), { expirationTtl: 30 * 86400 });
+      return { status: 'ok' };
+    }
+    if (!who.superAdmin) return { status: 'error', result: '관리자만 볼 수 있어요' };
+    const { keys } = await env.CAL.list({ prefix: 'pdiag:' });
+    const recent = keys.slice(-50);
+    return { status: 'ok', result: await Promise.all(recent.map((k) => env.CAL.get(k.name, 'json'))) };
+  }
   if (api === 'push_sub' || api === 'push_unsub') {
     if (!p.hash) return { status: 'error', result: 'hash가 필요합니다' };
     const who = await whoAmI(env, p.hash);

@@ -1139,3 +1139,18 @@ img.is-broken { visibility: hidden; }
 .push-steps { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; color: var(--text-2); font-size: 15px; }
 .push-steps b { color: var(--text); }
 body { overflow-x: clip; }
+
+/* ═══ 좋아요 ═══ */
+.like { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-2); color: var(--text-2); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; transition: background-color .15s, color .15s, border-color .15s, transform .1s; font-variant-numeric: tabular-nums; }
+.like .ic { width: 17px; height: 17px; }
+.like:hover { border-color: var(--line-2); color: var(--text); }
+.like:active { transform: scale(.96); }
+.like.is-on { background: var(--brand-soft); border-color: color-mix(in srgb, var(--brand) 30%, transparent); color: var(--brand); }
+.like.is-on .ic { fill: currentColor; fill-opacity: .18; }
+.post__foot .like { height: 30px; padding: 0 10px; }
+.react { display: flex; align-items: center; gap: 12px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.react .like { height: 40px; padding: 0 16px; font-size: 15px; border-radius: 12px; }
+.react__hint { font-size: 13.5px; color: var(--text-3); }
+#pushCard.is-on { border-color: color-mix(in srgb, var(--lime) 60%, transparent); }
+#pushCard.is-on #pushHint::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--lime); vertical-align: 1px; }
+.push-test { display: inline-block; margin-top: 4px; font-size: 13px; }

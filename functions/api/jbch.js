@@ -473,10 +473,17 @@ async function calImageGet(env, p) {
 
 // 댓글 달기(add_comment)·지우기(del_comment): 청년회교제실 글에만 허락
 const CH_ID = '86';
+// 댓글·좋아요: 교제록 + 청년회 앨범·결혼식 앨범 글에만
+const REACT_BOARDS = ['2122', '7159', '7161'];
 async function comment(env, p) {
   const mode = p.mode;
-  if (mode !== 'add_comment' && mode !== 'del_comment') return { status: 'error', result: '허용되지 않은 댓글 명령입니다' };
+  if (!['add_comment', 'del_comment', 'chkLike', 'processLike'].includes(mode)) return { status: 'error', result: '허용되지 않은 댓글 명령입니다' };
   if (!/^\d+$/.test(p.board_uid || '')) return { status: 'error', result: '글 번호가 없습니다' };
+  // 내가 좋아요를 눌렀는지 보기만 하는 건 게시판 확인 없이 바로
+  if (mode === 'chkLike') {
+    return relay(APIS.comment.path, { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dev_name: DEV_NAME, tokenId: env.JBCH_TOKEN, hash: p.hash, mode, board_uid: p.board_uid, chId: CH_ID }) });
+  }
+  if (mode === 'processLike' && !['1', '2'].includes(String(p.sw))) return { status: 'error', result: '좋아요 값이 올바르지 않아요' };
   const text = String(p.comment || '').trim();
   if (mode === 'add_comment' && text.length < 2) return { status: 'error', result: '댓글은 2자 이상 써 주세요' };
   if (text.length > 1000) return { status: 'error', result: '댓글이 너무 깁니다 (1000자 이하)' };
@@ -488,10 +495,11 @@ async function comment(env, p) {
     body: JSON.stringify({ dev_name: DEV_NAME, tokenId: env.JBCH_TOKEN, hash: p.hash, chId: CH_ID, use_kind: '1', flag: '1', uid: p.board_uid }),
   });
   const row = post.status === 'ok' && Array.isArray(post.result) ? post.result.find((x) => String(x.postUid) === p.board_uid) : null;
-  if (!row || !WRITE_BOARDS.includes(String(row.position))) return { status: 'error', result: '댓글을 달 수 없는 글입니다' };
+  if (!row || !REACT_BOARDS.includes(String(row.position))) return { status: 'error', result: mode === 'processLike' ? '좋아요를 누를 수 없는 글입니다' : '댓글을 달 수 없는 글입니다' };
 
   const body = { dev_name: DEV_NAME, tokenId: env.JBCH_TOKEN, hash: p.hash, mode, board_uid: p.board_uid, chId: CH_ID };
   if (mode === 'add_comment') { body.comment = text; body.url = String(p.url || '').slice(0, 300); }
+  else if (mode === 'processLike') body.sw = String(p.sw);
   else body.comment_uid = p.comment_uid;
   return relay(APIS.comment.path, { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 }

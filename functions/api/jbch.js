@@ -353,10 +353,13 @@ async function meetup(env, api, p, raw) {
   if (kv) return kv;
   const who = await whoAmI(env, p.hash);
   if (who.error) return who.error;
-  const b = boardOf(who.u);
+  // 형제는 형제 번개, 자매는 자매 번개만. 최고 관리자는 둘 다 골라서 볼 수 있음
+  let b = boardOf(who.u);
+  if (who.superAdmin && ['m', 'f'].includes(raw.board)) b = raw.board;
+  else if (who.superAdmin && !b) b = 'm';
   if (!b) return { status: 'error', result: '깨사모 회원정보에 성별이 없어 번개 게시판을 열 수 없어요' };
   const me = { userid: who.u.userid, name: who.u.name };
-  const base = { board: b, boardName: BOARD_NAME[b] };
+  const base = { board: b, boardName: BOARD_NAME[b], boards: who.superAdmin ? ['m', 'f'] : [b] };
 
   if (api === 'bg_list') {
     const [ms, js] = await Promise.all([listAll(env, `bgm:${b}:`), listAll(env, `bgj:${b}:`)]);

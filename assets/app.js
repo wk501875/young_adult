@@ -2180,10 +2180,17 @@
   const peopleStack = (names, n) => `<span class="stack">${names.slice(0, 4).map((nm) => avatar(nm, '', 'xs')).join('')}${n > 4 ? `<span class="stack__more">+${n - 4}</span>` : ''}</span>`;
 
   let bgTab = 'up';
+  // 형제는 형제 번개, 자매는 자매 번개만 보임 (서버가 회원정보 성별로 정함). 최고 관리자만 둘을 바꿔 가며 봄
+  const BG_NAME = { m: '형제', f: '자매' };
+  let bgBoard = store.get('bgBoard', '');
+  const myBgBoard = () => (/자매|여/.test(auth.me?.sex || '') ? 'f' : /형제|남/.test(auth.me?.sex || '') ? 'm' : '');
+  const bgApi = (api, params = {}) => callApi(api, { ...params, ...(isAdmin() && bgBoard ? { board: bgBoard } : {}) });
   async function viewMeetups() {
+    const guess = (isAdmin() && bgBoard) || myBgBoard();
     $app.innerHTML = `
-      <header class="page-head"><div><h1>번개</h1><p id="bgSub">함께 밥 먹고, 운동하고, 놀러 가요</p></div>
+      <header class="page-head"><div><h1 id="bgTitle">${guess ? `${BG_NAME[guess]} 번개` : '번개'}</h1><p>함께 밥 먹고, 운동하고, 놀러 가요</p></div>
         <button type="button" class="btn btn--primary btn--sm" id="bgNew">${icon('plus')}번개 열기</button></header>
+      <div id="bgBoards"></div>
       <div class="seg seg--full" id="bgTabs" role="group" aria-label="번개 보기">
         <button type="button" data-t="up" aria-pressed="${bgTab === 'up'}">다가오는 번개</button>
         <button type="button" data-t="past" aria-pressed="${bgTab === 'past'}">지난 번개</button>
@@ -2191,11 +2198,17 @@
       <div id="bgList">${skeletonCards(3)}</div>`;
     document.getElementById('bgNew').onclick = () => editMeetup(null);
     document.getElementById('bgTabs').onclick = (e) => { const b = e.target.closest('[data-t]'); if (b) { bgTab = b.dataset.t; viewMeetups(); } };
-    const r = await callApi('bg_list');
+    const r = await bgApi('bg_list');
     const $l = document.getElementById('bgList');
     if (!$l) return;
     if (r.status !== 'ok') { $l.innerHTML = emptyState({ ic: 'alert', title: '번개를 불러오지 못했어요', desc: esc(errText(r)) }); return; }
-    document.getElementById('bgSub').innerHTML = `<span class="board-pill">${icon('lock')}${esc(r.boardName)} 번개</span> ${esc(r.boardName)}끼리만 보는 게시판이에요`;
+    document.getElementById('bgTitle').textContent = `${r.boardName} 번개`;
+    // 최고 관리자: 형제 번개 / 자매 번개 바꿔 보기
+    if ((r.boards || []).length > 1) {
+      const $bb = document.getElementById('bgBoards');
+      $bb.innerHTML = `<div class="chips chips--tight bg-boards" role="group" aria-label="게시판 고르기">${r.boards.map((k) => `<button type="button" class="chip" data-b="${k}" aria-pressed="${k === r.board}">${BG_NAME[k]} 번개</button>`).join('')}<span class="hint">관리자만 둘 다 볼 수 있어요</span></div>`;
+      $bb.onclick = (e) => { const c = e.target.closest('[data-b]'); if (c && c.dataset.b !== r.board) { bgBoard = c.dataset.b; store.set('bgBoard', bgBoard); viewMeetups(); } };
+    }
     const today = ymd(new Date());
     const items = r.items.filter((m) => (bgTab === 'up' ? m.date >= today : m.date < today))
       .sort((a, b) => (bgTab === 'up' ? 1 : -1) * (a.date.localeCompare(b.date) || (a.time || '').localeCompare(b.time || '')));
@@ -2231,7 +2244,7 @@
         const on = !!b.dataset.on;
         if (!on && !(await confirmSheet('참여를 취소할까요?', '취소해도 다시 "나도 갈래"를 누를 수 있어요.', '취소하기', 'danger'))) return;
         b.disabled = true; b.innerHTML = spinner;
-        const res = await callApi('bg_join', { id: b.dataset.join, on });
+        const res = await bgApi('bg_join', { id: b.dataset.join, on });
         if (res.status !== 'ok') { toast(errText(res), { tone: 'error' }); }
         else toast(on ? '참여했어요' : '참여를 취소했어요');
         viewMeetups();
@@ -2242,7 +2255,7 @@
   async function viewMeetup(id) {
     const back = `<a class="back" href="#/meetup">${icon('left')}번개</a>`;
     $app.innerHTML = `${back}${skeletonCards(1)}`;
-    const r = await callApi('bg_get', { id });
+    const r = await bgApi('bg_get', { id });
     if (!document.querySelector('.back')) return;
     if (r.status !== 'ok') { $app.innerHTML = back + emptyState({ ic: 'alert', title: '번개를 찾을 수 없어요', desc: esc(errText(r)) }); return; }
     const m = r.item;
@@ -2255,7 +2268,7 @@
     $app.innerHTML = `
       ${back}
       <article class="card detail bgd">
-        <div class="bgd__top"><span class="bgst bgst--${st[0]}">${st[1]}</span><span class="board-pill">${icon('lock')}${esc(r.boardName)} 번개</span></div>
+        <div class="bgd__top"><span class="bgst bgst--${st[0]}">${st[1]}</span>${(r.boards || []).length > 1 ? `<span class="tag t-sky">${esc(r.boardName)} 번개</span>` : ''}</div>
         <h1 class="detail__title">${esc(m.title)}</h1>
         <div class="detail__by">${avatar(m.by.name)}<div><b>${esc(m.by.name)}</b><span>번개를 열었어요${m.edited ? ' · 고침' : ''}</span></div></div>
         <ul class="bgd__info">
@@ -2292,19 +2305,19 @@
       const on = !!b.dataset.on;
       if (!on && !(await confirmSheet('참여를 취소할까요?', '취소해도 다시 "나도 갈래"를 누를 수 있어요.', '취소하기', 'danger'))) return;
       b.disabled = true; b.innerHTML = `${spinner}${on ? '참여하는 중' : '취소하는 중'}`;
-      const res = await callApi('bg_join', { id, on });
+      const res = await bgApi('bg_join', { id, on });
       if (res.status !== 'ok') toast(errText(res), { tone: 'error' }); else toast(on ? '참여했어요' : '참여를 취소했어요');
       viewMeetup(id);
     });
     document.getElementById('bgEdit')?.addEventListener('click', () => editMeetup(m));
     document.getElementById('bgClose')?.addEventListener('click', async () => {
-      const res = await callApi('bg_close', { id, closed: !m.closed });
+      const res = await bgApi('bg_close', { id, closed: !m.closed });
       if (res.status !== 'ok') return toast(errText(res), { tone: 'error' });
       toast(m.closed ? '다시 모집해요' : '마감했어요'); viewMeetup(id);
     });
     document.getElementById('bgDel')?.addEventListener('click', async () => {
       if (!(await confirmSheet('번개를 지울까요?', '참여자와 댓글도 함께 지워지고 되돌릴 수 없어요.', '지우기', 'danger'))) return;
-      const res = await callApi('bg_delete', { id });
+      const res = await bgApi('bg_delete', { id });
       if (res.status !== 'ok') return toast(errText(res), { tone: 'error' });
       toast('번개를 지웠어요'); location.hash = '#/meetup';
     });
@@ -2315,7 +2328,7 @@
         actions: [{ label: '취소', value: null }, { label: '저장', value: 'save', kind: 'primary' }],
       });
       if ((await sh.result) !== 'save') return;
-      const res = await callApi('bg_review', { id, review: sh.el.querySelector('#rvText').value });
+      const res = await bgApi('bg_review', { id, review: sh.el.querySelector('#rvText').value });
       if (res.status !== 'ok') return toast(errText(res), { tone: 'error' });
       toast('후기를 남겼어요'); viewMeetup(id);
     });
@@ -2354,7 +2367,7 @@
         if (!text) return;
         const temp = { cid: 'tmp', name: r.me.name, userid: r.me.userid, text, pending: true };
         list.push(temp); draw();
-        const res = await callApi('bg_comment', { id, text });
+        const res = await bgApi('bg_comment', { id, text });
         const i = list.indexOf(temp);
         if (res.status !== 'ok') { list.splice(i, 1); draw(); document.querySelector('#bgCmtForm textarea').value = text; toast(errText(res), { tone: 'error' }); return; }
         list[i] = { ...temp, pending: false, cid: res.result.cid, at: new Date().toISOString() };
@@ -2365,7 +2378,7 @@
           if (!(await confirmSheet('댓글을 지울까요?', '지운 댓글은 되돌릴 수 없어요.', '지우기', 'danger'))) return;
           const i = list.findIndex((x) => x.cid === b.dataset.del);
           const [gone] = list.splice(i, 1); draw();
-          const res = await callApi('bg_comment_del', { id, cid: gone.cid });
+          const res = await bgApi('bg_comment_del', { id, cid: gone.cid });
           if (res.status !== 'ok') { list.splice(i, 0, gone); draw(); toast(errText(res), { tone: 'error' }); }
         };
       });
@@ -2409,7 +2422,7 @@
       if (v.placeUrl && !/^https:\/\//.test(v.placeUrl)) return bad('장소 링크는 https:// 로 시작해야 해요', f.placeUrl);
       if (v.deadline && v.deadline.slice(0, 10) > v.date) return bad('마감은 번개 날짜보다 늦을 수 없어요', f.deadline);
       btn.disabled = true; btn.innerHTML = `${spinner}저장 중`;
-      const res = await callApi('bg_save', { id: m?.id || '', meetup: v });
+      const res = await bgApi('bg_save', { id: m?.id || '', meetup: v });
       if (res.status !== 'ok') { btn.disabled = false; btn.textContent = m ? '저장' : '번개 열기'; return bad(esc(errText(res))); }
       sh.close();
       toast(m ? '고쳤어요' : '번개를 열었어요');

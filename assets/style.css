@@ -1154,3 +1154,5 @@ body { overflow-x: clip; }
 #pushCard.is-on { border-color: color-mix(in srgb, var(--lime) 60%, transparent); }
 #pushCard.is-on #pushHint::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: var(--lime); vertical-align: 1px; }
 .push-test { display: inline-block; margin-top: 4px; font-size: 13px; }
+.bg-boards { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.bg-boards .hint { margin-left: 4px; }

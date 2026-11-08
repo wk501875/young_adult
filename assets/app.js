@@ -178,6 +178,8 @@
       title: title || (date ? `교제록 · ${korDate(date)}` : '교제록'),
       dept: deptOf(title),
       author: String(sec.writer?.[0] || pick(o, ['username', 'author', 'name'])),
+      // 올린 계정 아이디 (본문에 다른 작성자를 적은 글이면 사진을 섞지 않으려고 비워 둠)
+      uid: !sec.writer?.[0] || sec.writer[0] === String(o.username || '') ? String(o.userid || '') : '',
       date,
       body,
       text,
@@ -386,13 +388,41 @@
     el.textContent = css;
     document.head.appendChild(el);
   })();
-  function avatar(name, url, size = 'md') {
+  // 프로필 사진: 아이디를 알면 (앱에서 바꾼 사진 → 깨사모 사진) 순서로, 모르면 이름 첫 글자
+  const picCache = new Map(); // 아이디 → 사진 주소('' = 사진 없음)
+  const okPic = (u) => /^(https:\/\/|data:image\/(jpeg|webp|png);base64,)/.test(u || '');
+  function avatar(name, url, size = 'md', uid = '') {
     const n = String(name || '').trim();
     const initial = esc(n ? (/^[가-힣]/.test(n) ? n[0] : n[0].toUpperCase()) : '·');
-    const img = /^https:\/\//.test(url || '')
-      ? `<img src="${esc(url)}" alt="" loading="lazy" onerror="this.remove()">` : '';
-    return `<span class="av av--${size} t-${tone(n)}" aria-hidden="true">${initial}${img}</span>`;
+    const u = (uid && picCache.get(uid)) || url;
+    const img = okPic(u) ? `<img src="${esc(u)}" alt="" loading="lazy" onerror="this.remove()">` : '';
+    return `<span class="av av--${size} t-${tone(n)}"${uid ? ` data-uid="${esc(uid)}"` : ''} aria-hidden="true">${initial}${img}</span>`;
   }
+  // 화면에 아이디 달린 아바타가 생기면 사진을 모아서 한 번에 받아 채움
+  let picTimer = 0;
+  const picPending = new Set();
+  function paintPics(root = document) {
+    root.querySelectorAll('.av[data-uid]').forEach((el) => {
+      const u = picCache.get(el.dataset.uid);
+      if (!okPic(u)) return;
+      const img = el.querySelector('img');
+      if (img) { if (img.getAttribute('src') !== u) img.src = u; return; }
+      el.insertAdjacentHTML('beforeend', `<img src="${esc(u)}" alt="" loading="lazy" onerror="this.remove()">`);
+    });
+  }
+  async function fillPics() {
+    if (!auth.hash) return;
+    const want = [...new Set([...document.querySelectorAll('.av[data-uid]')].map((el) => el.dataset.uid))]
+      .filter((x) => x && !picCache.has(x) && !picPending.has(x)).slice(0, 60);
+    if (want.length) {
+      want.forEach((x) => picPending.add(x));
+      const r = await callApi('avatar_get', { ids: want });
+      want.forEach((x) => { picPending.delete(x); picCache.set(x, r.status === 'ok' ? (r.result?.[x] || '') : ''); });
+    }
+    paintPics();
+  }
+  new MutationObserver(() => { clearTimeout(picTimer); picTimer = setTimeout(fillPics, 200); })
+    .observe(document.body, { childList: true, subtree: true });
   const tag = (dept) => (dept ? `<span class="tag t-${tone(dept)}">${esc(dept)}</span>` : '');
   function rel(d) {
     if (!d) return '';
@@ -606,7 +636,7 @@
         <h1 class="welcome__title">이번 주 교제</h1>
         <p class="welcome__sub" id="welcomeSub">이번 주 교제록을 불러오는 중이에요</p>
         <a class="composer" href="#/write">
-          ${avatar(me?.name)}
+          ${avatar(me?.name, me?.pic, 'md', me?.userid)}
           <span class="composer__ph">${draft ? '쓰다 만 교제록을 이어서 써 보세요' : '이번 주 교제는 어땠나요?'}</span>
         </a>
         <div class="composer__bar">
@@ -761,13 +791,13 @@
         return `
           <a class="post card${photo ? ' post--photo' : ''}${animate && !reduceMotion() ? ' rise' : ''}" style="--i:${Math.min(i, 8)}" href="#/post/${encodeURIComponent(p.id)}">
             ${photo ? `<div class="post__cover">${imgTag(p.photos[0])}
-                <span class="post__chip">${avatar(p.author, '', 'xs')}<b>${esc(p.author || '작성자')}</b><small>${fullDate(p.date)}${p.dept ? ` · ${esc(p.dept)}` : ''}</small></span>
+                <span class="post__chip">${avatar(p.author, '', 'xs', p.uid)}<b>${esc(p.author || '작성자')}</b><small>${fullDate(p.date)}${p.dept ? ` · ${esc(p.dept)}` : ''}</small></span>
                 ${isNew(p) ? '<span class="tag tag--new post__badge">새 글</span>' : ''}
                 ${p.photos.length > 1 ? `<span class="post__more">${icon('image')}${p.photos.length}</span>` : ''}
               </div>
               <div class="post__body">${text}</div>`
             : `<div class="post__head">
-                ${avatar(p.author)}
+                ${avatar(p.author, '', 'md', p.uid)}
                 <div class="post__who"><b>${esc(p.author || '작성자')}</b><span>${fullDate(p.date)}${p.dept ? ` · <em class="c-${tone(p.dept)}">${esc(p.dept)}</em>` : ''}</span></div>
                 ${isNew(p) ? '<span class="tag tag--new">새 글</span>' : ''}
               </div>${text}`}
@@ -851,7 +881,7 @@
         <div class="detail__tags">${tag(p.dept)}</div>
         <h1 class="detail__title">${esc(p.title)}</h1>
         <div class="detail__by">
-          ${avatar(p.author)}
+          ${avatar(p.author, '', 'md', p.uid)}
           <div><b>${esc(p.author || '작성자')}</b><span>${fullDate(p.date)}${p.hits ? ` · 조회 ${p.hits}` : ''}</span></div>
         </div>
         ${body}
@@ -946,7 +976,7 @@
     const item = (x) => {
       const d = x.created ? new Date(String(x.created).replace(' ', 'T')) : null;
       return `<li class="${x.pending ? 'is-pending' : ''}">
-        ${avatar(x.username, x.profilePic, 'sm')}
+        ${avatar(x.username, x.profilePic, 'sm', x.userid)}
         <div class="cmt__body">
           <div class="cmt__head"><b>${esc(x.username || '')}</b>${x.sex ? `<span>${esc(x.sex)}</span>` : ''}<time>${x.pending ? '보내는 중' : esc(rel(d && !isNaN(d) ? d : null))}</time>
             ${isMine(x) && !x.pending ? `<button type="button" class="cmt__del" data-del="${esc(x.uid)}" aria-label="내 댓글 지우기">${icon('trash')}</button>` : ''}</div>
@@ -974,7 +1004,7 @@
       <h2>${icon('msg')}댓글<small></small></h2>
       <ul class="cmts"></ul>
       <form class="cmt-form" id="cmtForm">
-        ${avatar(auth.me?.name, '', 'sm')}
+        ${avatar(auth.me?.name, auth.me?.pic, 'sm', auth.me?.userid)}
         <div class="cmt-form__box">
           <textarea name="comment" rows="1" maxlength="1000" placeholder="댓글 남기기" aria-label="댓글"></textarea>
           <button class="cmt-form__send" type="submit" aria-label="댓글 등록" disabled>${icon('send')}</button>
@@ -1215,6 +1245,73 @@
 
   /* ─── 화면: 쓰기 ─── */
   const photos = [];
+  /* ─── 교제록 템플릿: 자주 쓰는 양식을 저장해 두고 불러오기 (계정에 저장 → 휴대폰·컴퓨터 어디서든) ───
+   * 날짜·작성자·사진은 빼고 저장. 불러오면 오늘 날짜·내 이름으로 채우고, 되돌리기 가능 */
+  const tplSummary = (d = {}) => [
+    d.dept,
+    (d.people || []).length ? `참석 ${(d.people || []).length}명` : '',
+    d.verse ? '말씀' : '',
+    d.share ? '나눔' : '',
+    Object.values(d.prayers || {}).filter(Boolean).length ? `기도제목 ${Object.values(d.prayers || {}).filter(Boolean).length}` : '',
+    d.etc ? '기타' : '',
+  ].filter(Boolean).join(' · ') || '빈 양식';
+  async function openTemplates() {
+    const sh = openSheet({ title: '교제록 템플릿', body: '<div id="tplBody"><span class="sk sk-line"></span><span class="sk sk-line" style="width:70%"></span></div>', actions: [{ label: '닫기', value: false }] });
+    const $b = sh.el.querySelector('#tplBody');
+    const r = await callApi('tpl_list');
+    if (r.status !== 'ok') { $b.innerHTML = `<p class="inline-error">${icon('alert')}${esc(errText(r))}</p>`; return; }
+    let list = r.result || [];
+    const render = () => {
+      const cur = store.get('draft', null);
+      $b.innerHTML = `
+        <p class="sheet__text">자주 쓰는 양식을 저장해 두고 불러와 쓰세요. 날짜·작성자·사진은 저장하지 않아요.</p>
+        <ul class="tpl-list">${list.length ? list.map((t) => `<li>
+            <span class="tpl-list__txt"><b>${esc(t.name)}</b><small>${esc(tplSummary(t.data))}</small></span>
+            <button type="button" class="btn btn--primary btn--sm" data-load="${esc(t.id)}">불러오기</button>
+            <button type="button" class="icon-btn" data-del="${esc(t.id)}" aria-label="${esc(t.name)} 지우기">${icon('trash')}</button>
+          </li>`).join('') : '<li class="tpl-empty">아직 저장한 템플릿이 없어요</li>'}</ul>
+        <div class="tpl-save">
+          <input class="input" id="tplName" maxlength="30" placeholder="템플릿 이름 (예: 순종부 토요교제)"${cur ? '' : ' disabled'}>
+          <button type="button" class="btn btn--sm" id="tplSave"${cur ? '' : ' disabled'}>지금 쓴 내용 저장</button>
+        </div>
+        ${cur ? '<p class="hint">같은 이름으로 저장하면 덮어써요</p>' : '<p class="hint">먼저 교제록을 조금 써 두면 그 내용을 템플릿으로 저장할 수 있어요</p>'}`;
+      $b.querySelectorAll('[data-load]').forEach((btn) => {
+        btn.onclick = () => {
+          const t = list.find((x) => x.id === btn.dataset.load);
+          if (!t) return;
+          const stash = store.get('draft', null);
+          store.set('draft', { ...t.data, date: ymd(new Date()), writer: auth.me?.name || '' });
+          sh.close();
+          viewWrite();
+          toast(`'${t.name}' 템플릿을 불러왔어요`, { action: { label: '되돌리기', onClick: () => { if (stash) store.set('draft', stash); else store.del('draft'); viewWrite(); } } });
+        };
+      });
+      $b.querySelectorAll('[data-del]').forEach((btn) => {
+        btn.onclick = async () => {
+          const res = await callApi('tpl_del', { id: btn.dataset.del });
+          if (res.status !== 'ok') return toast(errText(res), { tone: 'error' });
+          list = res.result || [];
+          render();
+          toast('템플릿을 지웠어요');
+        };
+      });
+      const $save = $b.querySelector('#tplSave');
+      $save.onclick = async () => {
+        const name = $b.querySelector('#tplName').value.trim();
+        if (!name) { $b.querySelector('#tplName').focus(); return toast('템플릿 이름을 적어 주세요', { tone: 'error' }); }
+        const { date, writer, ...data } = store.get('draft', null) || {};
+        $save.disabled = true;
+        const res = await callApi('tpl_save', { name, data });
+        $save.disabled = false;
+        if (res.status !== 'ok') return toast(errText(res), { tone: 'error' });
+        list = res.result || [];
+        render();
+        toast(`'${name}' 템플릿으로 저장했어요`);
+      };
+    };
+    render();
+  }
+
   async function viewWrite() {
     $app.innerHTML = `${pageHead('교제록 쓰기')}${skeletonCards(2)}`;
     const rosters = await loadRosters();
@@ -1230,7 +1327,7 @@
     const STEPS = [['people', '참석'], ['verse', '말씀'], ['share', '나눔'], ['prayer', '기도제목']];
 
     $app.innerHTML = `
-      ${pageHead('교제록 쓰기', '쓰는 내용은 이 기기에 자동으로 저장돼요', '<span class="saved" id="saved" aria-live="polite"></span>')}
+      ${pageHead('교제록 쓰기', '쓰는 내용은 이 기기에 자동으로 저장돼요', `<span class="saved" id="saved" aria-live="polite"></span><button type="button" class="btn btn--sm" id="tplBtn">${icon('copy')}템플릿</button>`)}
       <ol class="stepper card" id="steps" aria-label="작성 진행">${STEPS.map(([k, l], i) => `<li data-s="${k}"><span class="stepper__dot"><b>${i + 1}</b>${icon('check')}</span><span class="stepper__label">${l}</span></li>`).join('')}</ol>
       <p class="inline-error" id="formError" role="alert" hidden></p>
       <form class="write" id="f" autocomplete="off">
@@ -1386,6 +1483,7 @@
     };
     update(false);
     if (store.get('draft', null)) document.getElementById('saved').innerHTML = `${icon('check')}자동 저장됨`;
+    document.getElementById('tplBtn').onclick = () => openTemplates();
 
     // 사진
     const $pi = document.getElementById('photoInput');
@@ -1659,8 +1757,10 @@
     $app.innerHTML = `
       ${pageHead('내 정보')}
       <section class="card profile">
-        ${avatar(me?.name, '', 'lg')}
-        <div class="profile__who"><b>${esc(me?.name || '로그인됨')}${me?.sex ? ` <span>${esc(me.sex)}</span>` : ''}</b><small>${esc([me?.church, me?.userid].filter(Boolean).join(' · '))}</small></div>
+        ${avatar(me?.name, me?.pic, 'lg', me?.userid)}
+        <div class="profile__who"><b>${esc(me?.name || '로그인됨')}${me?.sex ? ` <span>${esc(me.sex)}</span>` : ''}</b><small>${esc([me?.church, me?.userid].filter(Boolean).join(' · '))}</small>
+          <span class="profile__pic"><button type="button" class="link-btn" id="picBtn">${icon('image')}사진 바꾸기</button>${me?.hasCustomPic ? `<button type="button" class="link-btn muted-link" id="picReset">${me?.kaesamoPic ? '깨사모 사진으로' : '사진 지우기'}</button>` : ''}</span>
+          <input type="file" id="picFile" accept="image/*" hidden></div>
         ${me?.admin ? '<span class="tag t-sun">관리자</span>' : ''}
       </section>
       <section class="card setting">
@@ -1696,6 +1796,39 @@
       </details>` : ''}`;
 
     drawPushCard();
+    // 프로필 사진 바꾸기: 가운데를 정사각형으로 잘라 256px로 줄여서 앱에만 저장 (깨사모 사진은 그대로)
+    const setMyPic = (pic, custom) => {
+      const m = { ...auth.me, pic, hasCustomPic: custom };
+      auth.set(auth.hash, m);
+      picCache.set(m.userid, pic || '');
+      document.querySelectorAll(`.av[data-uid="${CSS.escape(m.userid)}"] img`).forEach((i) => { if (!pic) i.remove(); });
+      paintPics();
+      viewSettings();
+    };
+    document.getElementById('picBtn').onclick = () => document.getElementById('picFile').click();
+    document.getElementById('picFile').onchange = async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      try {
+        const url = URL.createObjectURL(file);
+        const img = new Image(); img.src = url; await img.decode();
+        const s = Math.min(img.naturalWidth, img.naturalHeight);
+        const c = document.createElement('canvas'); c.width = c.height = 256;
+        c.getContext('2d').drawImage(img, (img.naturalWidth - s) / 2, (img.naturalHeight - s) / 2, s, s, 0, 0, 256, 256);
+        URL.revokeObjectURL(url);
+        const data = c.toDataURL('image/jpeg', 0.85);
+        const r = await callApi('avatar_set', { image: data });
+        if (r.status !== 'ok') return toast(`사진을 바꾸지 못했어요: ${errText(r)}`, { tone: 'error' });
+        toast('프로필 사진을 바꿨어요');
+        setMyPic(data, true);
+      } catch { toast('이 사진은 쓸 수 없어요. 다른 사진으로 해 주세요', { tone: 'error' }); }
+    };
+    document.getElementById('picReset')?.addEventListener('click', async () => {
+      const r = await callApi('avatar_del');
+      if (r.status !== 'ok') return toast(`되돌리지 못했어요: ${errText(r)}`, { tone: 'error' });
+      toast(auth.me?.kaesamoPic ? '깨사모 사진으로 되돌렸어요' : '사진을 지웠어요');
+      setMyPic(auth.me?.kaesamoPic || '', false);
+    });
     document.getElementById('themePick').onclick = (e) => {
       const b = e.target.closest('[data-t]');
       if (!b) return;
@@ -2341,7 +2474,7 @@
       <article class="card detail bgd">
         <div class="bgd__top"><span class="bgst bgst--${st[0]}">${st[1]}</span>${(r.boards || []).length > 1 ? `<span class="tag t-sky">${esc(r.boardName)} 번개</span>` : ''}</div>
         <h1 class="detail__title">${esc(m.title)}</h1>
-        <div class="detail__by">${avatar(m.by.name)}<div><b>${esc(m.by.name)}</b><span>번개를 열었어요${m.edited ? ' · 고침' : ''}</span></div></div>
+        <div class="detail__by">${avatar(m.by.name, '', 'md', m.by.userid)}<div><b>${esc(m.by.name)}</b><span>번개를 열었어요${m.edited ? ' · 고침' : ''}</span></div></div>
         <ul class="bgd__info">
           <li>${icon('calendar')}<span><b>${esc(bgWhen(m))}</b>${!past ? `<small>${daysLeft(m) === 0 ? '오늘이에요' : `${daysLeft(m)}일 남았어요`}</small>` : ''}</span></li>
           ${m.place ? `<li>${icon('pin')}<span><b>${esc(m.place)}</b>${link ? `<a href="${esc(link)}" target="_blank" rel="noopener" class="link-btn">지도 보기${icon('external')}</a>` : ''}</span></li>` : ''}
@@ -2422,9 +2555,9 @@
       $c.innerHTML = `<h2>${icon('msg')}댓글<small>${list.length || ''}</small></h2>
         <ul class="cmts">${list.length ? list.map((x) => {
           const mine = x.userid === r.me.userid;
-          return `<li class="${x.pending ? 'is-pending' : ''}">${avatar(x.name, '', 'sm')}<div class="cmt__body"><div class="cmt__head"><b>${esc(x.name)}</b><time>${x.pending ? '보내는 중' : esc(rel(x.at ? new Date(x.at) : null))}</time>${mine && !x.pending ? `<button type="button" class="cmt__del" data-del="${esc(x.cid)}" aria-label="내 댓글 지우기">${icon('trash')}</button>` : ''}</div><p>${esc(x.text)}</p></div></li>`;
+          return `<li class="${x.pending ? 'is-pending' : ''}">${avatar(x.name, '', 'sm', x.userid)}<div class="cmt__body"><div class="cmt__head"><b>${esc(x.name)}</b><time>${x.pending ? '보내는 중' : esc(rel(x.at ? new Date(x.at) : null))}</time>${mine && !x.pending ? `<button type="button" class="cmt__del" data-del="${esc(x.cid)}" aria-label="내 댓글 지우기">${icon('trash')}</button>` : ''}</div><p>${esc(x.text)}</p></div></li>`;
         }).join('') : '<li class="cmt__empty">"저도 갈게요" 처럼 한마디 남겨 보세요</li>'}</ul>
-        <form class="cmt-form" id="bgCmtForm">${avatar(r.me.name, '', 'sm')}
+        <form class="cmt-form" id="bgCmtForm">${avatar(r.me.name, '', 'sm', r.me.userid)}
           <div class="cmt-form__box"><textarea name="t" rows="1" maxlength="200" placeholder="댓글 남기기" aria-label="댓글"></textarea>
           <button class="cmt-form__send" type="submit" aria-label="댓글 등록" disabled>${icon('send')}</button></div></form>`;
       const $f = document.getElementById('bgCmtForm');
@@ -2644,7 +2777,7 @@
       <label class="gsearch">${icon('search')}<input id="gq" type="search" placeholder="교제록 찾기 · 이름, 말씀, 나눔" value="${esc(state.q)}" autocomplete="off" enterkeyhint="search"><kbd>/</kbd></label>
       <div class="topbar__right">
         <a class="btn btn--primary topbar__write" id="writeBtn" href="#/write">${icon('pen')}<span>교제록 쓰기</span></a>
-        <a class="topbar__me" href="#/settings" aria-label="내 정보">${avatar(me?.name, '', 'sm')}</a>
+        <a class="topbar__me" href="#/settings" aria-label="내 정보">${avatar(me?.name, me?.pic, 'sm', me?.userid)}</a>
       </div>`;
     const $gq = document.getElementById('gq');
     if (!$gq.dataset.bound) $gq.dataset.bound = '1', $gq.addEventListener('input', () => {
@@ -2660,7 +2793,7 @@
         <div class="nav-group__head"><span>바로가기</span></div>
         <a class="nav-sub" href="${esc(C.board.siteUrl)}" target="_blank" rel="noopener">${icon('external')}<span>교회 사이트 교제실</span></a>
       </div>
-      <a class="side__me" href="#/settings">${avatar(me?.name, '', 'sm')}<span><b>${esc(me?.name || '')}</b><small>${esc(me?.church || '')}</small></span>${icon('right', 'ic--end')}</a>`;
+      <a class="side__me" href="#/settings">${avatar(me?.name, me?.pic, 'sm', me?.userid)}<span><b>${esc(me?.name || '')}</b><small>${esc(me?.church || '')}</small></span>${icon('right', 'ic--end')}</a>`;
     // 휴대폰 아래 탭은 다섯 개만 (쓰기는 홈의 쓰기 칸, 참석 흐름·관리는 내 정보에서)
     document.getElementById('tabbar').innerHTML = items.filter(([k]) => !['attendance', 'admin', 'write'].includes(k)).map(([k, href, label, ic]) =>
       `<a href="${href}"${k === tab ? ' aria-current="page"' : ''}${k === 'write' ? ' id="writeTab"' : ''}>${icon(ic)}<span>${label}</span>${counts[k] ? '<i class="dotbadge" aria-hidden="true"></i>' : ''}</a>`).join('');
@@ -2956,6 +3089,7 @@
       if (m.status !== 'ok' || !auth.hash) return;
       const was = isAdmin();
       auth.set(auth.hash, m.result);
+      picCache.set(m.result.userid, m.result.pic || ''); paintPics();
       const cur = location.hash.replace(/^#\/?/, '').split('/')[0];
       renderChrome(cur === 'post' || !cur ? 'list' : cur);
       if (was !== isAdmin() && cur === 'attendance') route();

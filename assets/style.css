@@ -1196,3 +1196,21 @@ body { overflow-x: clip; }
 .memo__note b { color: var(--text); margin-right: 4px; }
 @media (max-width: 560px) { .memo { padding: 16px; } .memo__block { padding: 12px; } .memo__table { font-size: 13.5px; } }
 body.no-panel .main > * { max-width: 1040px; }
+
+/* 프로필 사진 바꾸기 */
+.profile__who { display: grid; gap: 2px; }
+.profile__pic { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; }
+.profile__pic .link-btn { display: inline-flex; align-items: center; gap: 4px; font-size: 13.5px; }
+.profile__pic .link-btn .ic { width: 15px; height: 15px; }
+.muted-link { color: var(--text-3) !important; }
+
+/* 교제록 템플릿 */
+.tpl-list { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+.tpl-list li { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
+.tpl-list__txt { display: grid; flex: 1; min-width: 0; line-height: 1.4; }
+.tpl-list__txt b { font-size: 15px; }
+.tpl-list__txt small { font-size: 12.5px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tpl-empty { justify-content: center; color: var(--text-3); font-size: 14px; background: none !important; border-style: dashed !important; }
+.tpl-save { display: flex; gap: 8px; margin-top: 14px; }
+.tpl-save .input { flex: 1; min-width: 0; }
+.page-head #tplBtn { margin-left: 8px; }

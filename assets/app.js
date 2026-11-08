@@ -366,7 +366,26 @@
 
   /* ─── 작은 도우미 ─── */
   const hashOf = (s) => { let h = 0; for (const ch of String(s)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h; };
-  const tone = (s) => ['blue', 'sky', 'sun', 'green', 'rose'][hashOf(s) % 5];
+  // 부서는 정해진 부서 색(config.deptColors), 그 밖(사람 이름 아바타 등)은 이름으로 고른 색
+  const DEPT_COLORS = C.deptColors || {};
+  const DEPT_SLUG = Object.fromEntries(Object.keys(DEPT_COLORS).map((d, i) => [d, `d${i}`]));
+  const tone = (s) => DEPT_SLUG[s] || ['blue', 'sky', 'sun', 'green', 'rose'][hashOf(s) % 5];
+  // 부서 색 CSS를 설정에서 만들어 붙임 (부서 칩·점·태그·달력 막대·부서 카드 모두 같은 색)
+  (function deptColorStyles() {
+    const css = Object.entries(DEPT_COLORS).map(([d, c]) => {
+      const k = DEPT_SLUG[d];
+      return `.t-${k}{background:color-mix(in srgb,${c.base} 45%,var(--surface));color:${c.ink}}
+[data-theme="dark"] .t-${k}{background:color-mix(in srgb,${c.strong} 22%,var(--surface));color:${c.base}}
+.c-${k}{color:${c.ink}}[data-theme="dark"] .c-${k}{color:${c.base}}
+.cal__dots .t-${k},.evt__bar.t-${k},.ddot.t-${k}{background:${c.strong}}
+.story.t-${k}{color:${c.strong}}
+.ev-${k}{--ev:${c.strong};--ev-soft:color-mix(in srgb,${c.base} 40%,transparent)}`;
+    }).join('\n');
+    const el = document.createElement('style');
+    el.id = 'deptColors';
+    el.textContent = css;
+    document.head.appendChild(el);
+  })();
   function avatar(name, url, size = 'md') {
     const n = String(name || '').trim();
     const initial = esc(n ? (/^[가-힣]/.test(n) ? n[0] : n[0].toUpperCase()) : '·');
@@ -609,6 +628,7 @@
         <button type="button" class="link-btn" id="clearFilter" hidden>전체 보기</button>
         <select class="select select--sm" id="month" aria-label="기간"></select>
       </div>
+      <div class="chips chips--tight feed-depts" id="feedDepts" role="group" aria-label="부서별로 보기"></div>
       <div class="m-only">${searchBox('q', '이름, 말씀, 나눔으로 찾기', state.q)}</div>
       <div id="list">${skeletonCards(3)}</div>
       <div class="more" id="more"></div>`;
@@ -641,30 +661,41 @@
       ? `이번 주에 교제록 <b>${thisWeek}개</b>가 올라왔어요${fresh ? ` · 새 글 <b>${fresh}개</b>` : ''}`
       : '이번 주엔 아직 올라온 교제록이 없어요';
 
-    // 부서 카드 줄 (각 부서 최근 사진)
-    const depts = [...new Set(posts.map((p) => p.dept))];
+    // 부서 카드 줄: 인스타 스토리처럼 최근에 올라온 부서부터, 누르면 그 부서의 가장 최근 교제록으로
+    // (아직 안 본 최근 글이 있으면 테두리 강조 — 이 기기에서 본 글 기준)
+    const depts = [...new Set(posts.map((p) => p.dept).filter(Boolean))];
+    const storySeen = new Set(store.get('storySeen', []));
     const drawStories = () => {
       document.getElementById('stories').innerHTML = `
         <a class="story story--add" href="#/write"><span class="story__plus">${icon('plus')}</span><b>교제록 쓰기</b></a>
         ${depts.map((d) => {
           const mine = posts.filter((p) => p.dept === d);
-          const cover = mine.find((p) => p.photos.length)?.photos[0];
-          const n = mine.filter(isNew).length;
-          return `<button type="button" class="story t-${tone(d)}" data-d="${esc(d)}" aria-pressed="${state.dept === d}">
+          const latest = mine[0];
+          const cover = latest.photos[0] || mine.find((p) => p.photos.length)?.photos[0];
+          const unseen = !storySeen.has(latest.id);
+          return `<a class="story t-${tone(d)}${unseen ? ' is-unseen' : ''}" href="#/post/${encodeURIComponent(latest.id)}" data-story="${esc(latest.id)}" aria-label="${esc(d)} 최근 교제록 보기">
             ${cover ? imgTag(cover) : '<span class="story__pattern"></span>'}
             <span class="story__shade"></span>
-            ${n ? `<span class="story__badge">새 글 ${n}</span>` : ''}
-            <span class="story__name"><b>${esc(d)}</b><small>교제록 ${mine.length}개</small></span>
-          </button>`;
+            ${isNew(latest) ? '<span class="story__badge">새 글</span>' : ''}
+            <span class="story__name"><b>${esc(d)}</b><small>${esc(rel(latest.createdAt ? new Date(latest.createdAt) : latest.date))}</small></span>
+          </a>`;
         }).join('')}`;
     };
     drawStories();
     document.getElementById('stories').addEventListener('click', (e) => {
-      const b = e.target.closest('[data-d]');
-      if (!b) return;
-      state.dept = state.dept === b.dataset.d ? '' : b.dataset.d;
-      drawStories(); drawList(); renderSideDepts();
+      const a = e.target.closest('[data-story]');
+      if (!a) return;
+      storySeen.add(a.dataset.story);
+      store.set('storySeen', [...storySeen].slice(-200));
     });
+    // 최근 교제록 부서별로 보기 (위쪽 칩)
+    const $fd = document.getElementById('feedDepts');
+    $fd.onclick = (e) => {
+      const b = e.target.closest('[data-fd]');
+      if (!b) return;
+      state.dept = b.dataset.fd;
+      drawList(); renderSideDepts();
+    };
 
     const $month = document.getElementById('month');
     const drawMonths = () => {
@@ -677,7 +708,7 @@
     bindSearch('q', (v) => { state.q = v; syncSearchBoxes(); drawList(); });
     document.getElementById('clearFilter').onclick = () => {
       state.dept = ''; state.day = ''; state.month = ''; $month.value = '';
-      drawStories(); drawList(); renderSideDepts(); renderPanel();
+      drawList(); renderSideDepts(); renderPanel();
     };
 
     const $more = document.getElementById('more');
@@ -696,6 +727,10 @@
     fillBodies().then(() => { if (document.getElementById('list')) drawList(false); });
 
     function drawList(animate = true) {
+      // 부서 칩: 전체 + 최근에 올라온 부서 순
+      const $fdc = document.getElementById('feedDepts');
+      if ($fdc) $fdc.innerHTML = [['', '전체'], ...[...new Set(posts.map((p) => p.dept).filter(Boolean))].map((d) => [d, d])]
+        .map(([k, l]) => `<button type="button" class="chip" data-fd="${esc(k)}" aria-pressed="${state.dept === k}">${k ? `<i class="ddot t-${tone(k)}"></i>` : ''}${esc(l)}</button>`).join('');
       const q = state.q.toLowerCase();
       const byFilter = posts.filter((p) => inDept(p) &&
         (!state.month || (p.date && monthKey(p.date) === state.month)) &&
@@ -1717,6 +1752,35 @@
   const calFilter = () => store.get('calFilter', { church: true, youth: true, depts: null }); // depts: null = 볼 수 있는 부서 전부
   const passFilter = (e, f) => (e.scope === 'church' ? f.church : e.scope === 'youth' ? f.youth : (f.depts ? f.depts.includes(e.dept) : true));
 
+  /* 이달 안내: 관리자가 적은 글을 읽기 좋게.
+   * "[제목] 칸1 — 칸2 / 칸3" 줄은 표 머리, "값1 — 값2 / 값3" 줄은 표의 한 줄, 나머지는 메모로.
+   * 부서 이름(○○부)에는 부서 색 점. 표 모양이 하나도 없으면 원래 글 그대로 */
+  function memoHtml(memo) {
+    const blocks = [];
+    let cur = null;
+    const split = (s) => s.split(/\s*[—–]\s*|\s+\/\s+/).map((x) => x.trim()).filter(Boolean);
+    for (const raw of String(memo).split('\n')) {
+      const l = raw.trim();
+      if (!l) continue;
+      const h = l.match(/^\[([^\]]+)\]\s*(.*)$/);
+      if (h) { cur = { title: h[1].trim(), cols: h[2] ? split(h[2]) : [], rows: [], notes: [] }; blocks.push(cur); continue; }
+      if (!cur) { cur = { title: '', cols: [], rows: [], notes: [] }; blocks.push(cur); }
+      if (/\s[—–]\s/.test(l)) cur.rows.push(split(l)); else cur.notes.push(l);
+    }
+    const head = `<h2>${icon('pin')}이달 안내</h2>`;
+    if (!blocks.some((b) => b.rows.length)) return `<section class="card memo">${head}<p>${esc(memo)}</p></section>`;
+    const cell = (s) => (/^[가-힣]{1,4}부$/.test(s) ? `<span class="memo__dept"><i class="ddot t-${tone(s)}"></i>${esc(s)}</span>` : esc(s));
+    return `<section class="card memo">${head}<div class="memo__grid">${blocks.map((b) => `
+      <div class="memo__block">
+        ${b.title ? `<h3>${esc(b.title)}</h3>` : ''}
+        ${b.rows.length ? `<table class="memo__table">
+          ${b.cols.length ? `<thead><tr>${b.cols.map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead>` : ''}
+          <tbody>${b.rows.map((r) => `<tr>${r.map((c, i) => `<td${i === 0 ? ' class="memo__key"' : ''}>${cell(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+        </table>` : ''}
+        ${b.notes.map((n) => `<p class="memo__note">${esc(n).replace(/^([^:：]{1,12})[:：]/, '<b>$1</b>')}</p>`).join('')}
+      </div>`).join('')}</div></section>`;
+  }
+
   async function viewCalendar() {
     if (!state.calView) state.calView = thisMonth();
     const month = state.calView;
@@ -1801,7 +1865,7 @@
       const events = (r.events || []).filter((e) => passFilter(e, ff));
       document.getElementById('calBody').innerHTML = `
         <div class="card mcal">${monthGrid(month, events, selected)}</div>
-        ${meta.memo ? `<section class="card memo"><h2>${icon('pin')}이달 안내</h2><p>${esc(meta.memo)}</p></section>` : ''}
+        ${meta.memo ? memoHtml(meta.memo) : ''}
         <section class="agenda" id="agenda">${agenda(month, events, selected)}</section>`;
       document.querySelectorAll('.mcal [data-day]').forEach((c) => {
         c.onclick = (e) => {
@@ -1861,7 +1925,9 @@
             if (!p) return '<span class="ev ev--gap"></span>';
             const first = p.s === i, last = p.en === i;
             const cls = `ev ev-${evTone(p.e)}${p.en > p.s ? ' ev--multi' : ''}${first && !p.contL ? ' ev--l' : ''}${last && !p.contR ? ' ev--r' : ''}`;
-            const label = first || i === 0 ? esc(p.e.title) : '&nbsp;';
+            // 여러 날 막대: 이름을 첫 칸에만 쓰되 이 주에 남은 칸 길이만큼 펼쳐서 안 잘리게
+            const span = p.en - i + 1;
+            const label = first || i === 0 ? (p.en > p.s ? `<span class="ev__t" style="width:calc(${span * 100}% + ${span - 1}px)">${esc(p.e.title)}</span>` : esc(p.e.title)) : '&nbsp;';
             return `<button type="button" class="${cls}" data-ev="${esc(p.e.id)}" title="${esc(p.e.title)}">${label}</button>`;
           }).join('')}
           ${more ? `<span class="ev-more">+${more}</span>` : ''}
@@ -2851,6 +2917,8 @@
     document.title = tab === 'list' ? APP : document.title;
     window.scrollTo(0, 0);
     renderPanel();
+    // 일정 화면은 오른쪽 작은 달력이 겹치니 패널을 빼고 큰 달력을 넓게
+    document.body.classList.toggle('no-panel', name === 'calendar');
     if (name === 'post') return viewPost(decodeURIComponent(rest.join('/')));
     if (name === 'prayers') return viewPrayers();
     if (name === 'attendance') return isAdmin() ? viewAttendance() : viewAdminOnly();

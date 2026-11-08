@@ -1156,3 +1156,43 @@ body { overflow-x: clip; }
 .push-test { display: inline-block; margin-top: 4px; font-size: 13px; }
 .bg-boards { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
 .bg-boards .hint { margin-left: 4px; }
+
+/* ═══ 부서 카드(스토리): 아직 안 본 최근 글은 파란 테두리 ═══ */
+.story.is-unseen:not(.story--add) { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4.5px var(--brand), var(--shadow-photo); }
+/* 최근 교제록 부서 칩 */
+.feed-depts { display: flex; gap: 6px; flex-wrap: nowrap; overflow-x: auto; margin: -2px 0 14px; padding-bottom: 2px; scrollbar-width: none; }
+.feed-depts::-webkit-scrollbar { display: none; }
+.feed-depts .chip { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.feed-depts .chip .ddot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.feed-depts .chip[aria-pressed="true"] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+
+/* ═══ 일정: 큰 달력을 넓게, 글씨 크게, 여러 날 막대는 연한 색 + 이름 안 잘리게 ═══ */
+@media (min-width: 1180px) { body.no-panel .shell { grid-template-columns: 248px minmax(0, 1fr); max-width: 1400px; } body.no-panel .panel { display: none; } }
+.mcal__w { font-size: 13px; padding: 8px 0 10px; }
+.mcal__d { min-height: 118px; gap: 3px; }
+.mcal__d.sun, .mcal__d.sat { background: color-mix(in srgb, var(--surface-2) 60%, transparent); }
+.mcal__n { font-size: 14px; }
+.ev { height: 24px; line-height: 24px; font-size: 12.5px; color: color-mix(in srgb, var(--ev) 85%, #000); }
+.ev--multi { background: var(--ev-soft); color: color-mix(in srgb, var(--ev) 85%, #000); overflow: visible; text-overflow: clip; }
+.ev--multi.ev--l { border-left: 3px solid var(--ev); }
+[data-theme="dark"] .ev, [data-theme="dark"] .ev--multi { color: color-mix(in srgb, var(--ev) 60%, #fff); }
+.ev__t { position: relative; z-index: 1; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+.ev-more { font-size: 12px; }
+
+/* ═══ 이달 안내: 제목별 카드 + 표 ═══ */
+.memo { padding: 18px 20px; }
+.memo h2 { font-size: 16px; margin-bottom: 14px; }
+.memo__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.memo__block { padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-2); }
+.memo__block h3 { margin: 0 0 10px; font-size: 14.5px; font-weight: 600; }
+.memo__table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.memo__table th { padding: 0 6px 8px; text-align: left; font-size: 12.5px; font-weight: 600; color: var(--text-3); border-bottom: 1px solid var(--line); }
+.memo__table td { padding: 8px 6px; border-bottom: 1px solid var(--line); color: var(--text-2); vertical-align: top; }
+.memo__table tr:last-child td { border-bottom: 0; }
+.memo__key { color: var(--text) !important; font-weight: 600; white-space: nowrap; }
+.memo__dept { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.memo__dept .ddot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.memo__note { margin: 10px 0 0; font-size: 14px; color: var(--text-2); }
+.memo__note b { color: var(--text); margin-right: 4px; }
+@media (max-width: 560px) { .memo { padding: 16px; } .memo__block { padding: 12px; } .memo__table { font-size: 13.5px; } }
+body.no-panel .main > * { max-width: 1040px; }

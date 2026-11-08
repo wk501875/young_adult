@@ -29,6 +29,19 @@ window.APP_CONFIG = {
     writeEnabled: true,
   },
 
+  // 부서 색: 청년회 출석 현황표의 부서 머리 색 그대로 (base)
+  // 밝은 색은 흰 바탕에서 잘 안 보여서, 점·막대는 같은 색의 진한 쪽(strong), 글씨는 더 진한 쪽(ink)을 씀
+  deptColors: {
+    믿음부: { base: '#B7FFFE', strong: '#2FB3BE', ink: '#0E6A73' },
+    소망부: { base: '#F2FF30', strong: '#C2B300', ink: '#665E00' },
+    사랑부: { base: '#FFAA95', strong: '#EE7656', ink: '#A33A20' },
+    진리부: { base: '#7FBF85', strong: '#4C9A55', ink: '#2B6533' },
+    충성부: { base: '#FFB24D', strong: '#EE8A14', ink: '#965000' },
+    겸손부: { base: '#A4F57F', strong: '#68C83C', ink: '#3A771C' },
+    순종부: { base: '#BEB3F6', strong: '#8A79E4', ink: '#4A3AA3' },
+    청년회: { base: '#C9DAF8', strong: '#2F6FD6', ink: '#1E4993' },
+  },
+
   // 앨범 탭에 보여줄 교회 사이트 앨범 게시판 (청년회 부서 앨범)
   albums: [
     { boardId: 7159, name: '청년회 앨범' },

@@ -359,6 +359,7 @@
     zap: '<path d="M13.5 2.5 4.5 13.5h7l-1 8 9-11h-7z"/>',
     wifi: '<path d="M2.5 9a14 14 0 0 1 19 0"/><path d="M5.5 12.5a9.5 9.5 0 0 1 13 0"/><path d="M9 16a4.5 4.5 0 0 1 6 0"/><path d="M12 19.5v.1"/><path d="M3 3l18 18"/>',
     bell: '<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
+    thumb: '<path d="M7 10.5V20"/><path d="M7 10.5 11 3a2.6 2.6 0 0 1 2.9 3.3L13 9.5h5.2a2 2 0 0 1 2 2.4l-1.4 6.6a2 2 0 0 1-2 1.5H4.5a1.5 1.5 0 0 1-1.5-1.5V12a1.5 1.5 0 0 1 1.5-1.5z"/>',
   };
   const icon = (name, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
   const spinner = '<span class="spin" aria-hidden="true"></span>';
@@ -736,6 +737,7 @@
                 ${isNew(p) ? '<span class="tag tag--new">새 글</span>' : ''}
               </div>${text}`}
             <div class="post__foot">
+              ${likeBtn(p.id, p.likes)}
               <span>${icon('msg')}댓글 ${p.comments || 0}</span>
               ${p.prayers.length ? `<span>${icon('heart')}기도제목 ${p.prayers.length}</span>` : ''}
               ${p.people.length ? `<span>${icon('users')}${p.people.length}명</span>` : ''}
@@ -744,6 +746,7 @@
             </div>
           </a>`;
       }).join('')}</div>`;
+      checkLikes(rows.slice(0, 10).map((p) => p.id)); // 위쪽 글 몇 개만 내가 눌렀는지 확인
     }
     listRedraw = () => { if (document.getElementById('list')) drawList(false); };
     drawList(!restore);
@@ -818,6 +821,7 @@
         </div>
         ${body}
         ${photos}
+        <div class="react">${likeBtn(p.id, p.likes)}<span class="react__hint">마음에 들면 좋아요를 눌러 주세요</span></div>
         <section class="sec" id="comments"></section>
       </article>
       ${newer || older ? `<nav class="pager">
@@ -827,8 +831,71 @@
     $app.querySelectorAll('[data-photo]').forEach((b) => { b.onclick = () => lightbox(p.photos, Number(b.dataset.photo)); });
     sharpen($app.querySelector('.gallery'));
     bindPrayerMore($app);
+    checkLikes([p.id]);
     drawComments(p);
   }
+
+  /* ─── 좋아요 (교회 사이트 게시판의 '좋아요'와 같은 값) ───
+   * 피드·글·앨범 어디서 눌러도 같은 숫자가 함께 바뀜. 내가 눌렀는지는 화면에 보이는 글만 조금씩 확인 */
+  const likeState = new Map(); // 글 번호 → { liked: true/false/null(모름), count }
+  function likeOf(id, count = 0) {
+    let s = likeState.get(id);
+    if (!s) { s = { liked: null, count }; likeState.set(id, s); } else if (s.liked === null && !s.busy) s.count = count;
+    return s;
+  }
+  const likeBtn = (id, count) => {
+    const s = likeOf(String(id), Number(count) || 0);
+    return `<button type="button" class="like${s.liked ? ' is-on' : ''}" data-like="${esc(id)}" aria-pressed="${!!s.liked}" aria-label="좋아요 ${s.count}개">${icon('thumb')}<span>${s.count}</span></button>`;
+  };
+  function paintLike(id) {
+    const s = likeState.get(id);
+    document.querySelectorAll(`[data-like="${CSS.escape(id)}"]`).forEach((b) => {
+      b.classList.toggle('is-on', !!s.liked);
+      b.setAttribute('aria-pressed', String(!!s.liked));
+      b.setAttribute('aria-label', `좋아요 ${s.count}개`);
+      b.querySelector('span').textContent = s.count;
+    });
+  }
+  const likedFrom = (r) => [true, 1, '1', 'Y', 'y', 'yes', 'true'].includes(r.liked ?? r.result?.liked);
+  async function checkLikes(ids) {
+    for (const id of ids.map(String)) {
+      const s = likeState.get(id);
+      if (!s || s.liked !== null || s.busy) continue;
+      const r = await callApi('comment', { mode: 'chkLike', board_uid: id });
+      if (r.status !== 'ok') continue;
+      s.liked = likedFrom(r);
+      const total = r.total_like ?? r.result?.total_like;
+      if (total != null) s.count = Number(total) || 0;
+      paintLike(id);
+    }
+  }
+  async function toggleLike(id) {
+    const s = likeOf(id);
+    if (s.busy) return;
+    if (s.liked === null) await checkLikes([id]);
+    s.busy = true;
+    const was = !!s.liked;
+    s.liked = !was; s.count = Math.max(0, s.count + (was ? -1 : 1));
+    paintLike(id); // 먼저 바꿔 보여 주고, 실패하면 되돌림
+    const r = await callApi('comment', { mode: 'processLike', board_uid: id, sw: was ? 2 : 1 });
+    s.busy = false;
+    if (r.status !== 'ok') {
+      s.liked = was; s.count = Math.max(0, s.count + (was ? 1 : -1)); paintLike(id);
+      toast(`좋아요를 누르지 못했어요: ${errText(r)}`, { tone: 'error' });
+      return;
+    }
+    const total = r.total_like ?? r.result?.total_like;
+    if (total != null) s.count = Number(total) || 0;
+    if (r.process === 'plus' || r.process === 'minus') s.liked = r.process === 'plus';
+    paintLike(id);
+  }
+  // 카드 전체가 링크라서, 좋아요 버튼을 누를 땐 글로 넘어가지 않게 먼저 가로챔
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-like]');
+    if (!b) return;
+    e.preventDefault(); e.stopPropagation();
+    toggleLike(b.dataset.like);
+  }, true);
 
   async function drawComments(p) {
     const $c = document.getElementById('comments');
@@ -1434,7 +1501,19 @@
     } catch { toast('이 기기에서는 알림을 켤 수 없어요', { tone: 'error' }); return; }
     const r = await callApi('push_sub', { sub: sub.toJSON() });
     if (r.status !== 'ok') { toast(`알림을 켜지 못했어요: ${errText(r)}`, { tone: 'error' }); return; }
-    toast('알림을 켰어요. 새 글이 올라오면 알려 드릴게요');
+    toast('알림을 켰어요. 지금 시험 알림을 하나 보내 드려요');
+    await testPush();
+    return true;
+  }
+  // 알림이 어떻게 오는지 바로 보여 주기 (이 기기에서만, 서버를 거치지 않음)
+  async function testPush() {
+    const reg = await swReady();
+    if (!reg || Notification.permission !== 'granted') return;
+    await navigator.serviceWorker.ready;
+    await reg.showNotification('알림이 켜졌어요', {
+      body: '새 교제록·포토스토리·앨범이 올라오면 이렇게 알려 드려요. 누르면 그 글로 바로 가요.',
+      icon: '/assets/icon-192.png', badge: '/assets/icon-192.png', tag: 'ya-test', data: { url: '/#/settings' },
+    }).catch(() => {});
   }
   async function pushOff() {
     const reg = await swReady();
@@ -1460,6 +1539,8 @@
     const later = store.get('pushAskLater', 0);
     if (!['off', 'ios-install'].includes(st) || Date.now() < later) return;
     if (document.querySelector('.sheet-wrap, .coach')) return; // 다른 안내가 떠 있으면 다음에
+    // 한 번 띄웠으면 무엇을 고르든(닫거나 새로고침해도) 사흘 동안은 다시 안 띄움
+    store.set('pushAskLater', Date.now() + 3 * 86400e3);
     if (st === 'ios-install') {
       store.set('pushAskLater', Date.now() + 14 * 86400e3);
       await openSheet({
@@ -1476,8 +1557,17 @@
       actions: [{ label: '나중에', value: false }, { label: '알림 받기', value: true, kind: 'primary', icon: 'bell' }],
     }).result;
     if (!yes) { store.set('pushAskLater', Date.now() + 7 * 86400e3); return; }
-    await pushOn();
+    const ok = await pushOn();
     if (Notification.permission === 'denied') store.set('pushAskLater', Date.now() + 365 * 86400e3);
+    if (!ok) {
+      openSheet({
+        title: '알림을 켜지 못했어요',
+        body: Notification.permission === 'denied'
+          ? '<p class="sheet__text">휴대폰에서 이 사이트 알림이 막혀 있어요. 브라우저 설정 → 사이트 설정 → 알림에서 <b>young-adult.pages.dev</b>를 허용으로 바꾼 뒤, <b>내 정보 → 새 글 알림</b>에서 다시 켜 주세요.</p>'
+          : '<p class="sheet__text">허용 창이 닫혔거나 이 기기에서 알림을 쓸 수 없어요. <b>내 정보 → 새 글 알림</b>에서 언제든 다시 켤 수 있어요.</p>',
+        actions: [{ label: '알겠어요', value: true, kind: 'primary' }],
+      });
+    }
   }
   async function drawPushCard() {
     const $b = document.getElementById('pushBtn');
@@ -1501,6 +1591,17 @@
       if (st === 'on') await pushOff(); else await pushOn();
       drawPushCard();
     };
+    // 켜져 있으면 상태를 눈에 띄게 + 시험 알림 버튼
+    const card = document.getElementById('pushCard');
+    card.classList.toggle('is-on', st === 'on');
+    let $t = document.getElementById('pushTest');
+    if (st === 'on' && !$t) {
+      $t = document.createElement('button');
+      $t.type = 'button'; $t.id = 'pushTest'; $t.className = 'link-btn push-test';
+      $t.textContent = '시험 알림 받아 보기';
+      $t.onclick = () => testPush();
+      card.querySelector('span').appendChild($t);
+    } else if (st !== 'on' && $t) $t.remove();
   }
 
   async function viewSettings() {
@@ -2365,7 +2466,7 @@
   }
   const albumCard = (a) => `<a class="alb" href="#/album/${encodeURIComponent(a.id)}">
       <span class="alb__pic">${a.cover ? `<img src="${esc(thumbOf(a.cover))}" alt="" loading="lazy" decoding="async" onload="this.classList.add('loaded')" onerror="this.remove()">` : ''}${isNewAlbum(a) ? '<span class="tag tag--new alb__new">새 글</span>' : ''}</span>
-      <span class="alb__txt"><b>${esc(a.title)}</b><small>${a.date ? `${a.date.getFullYear()}. ${a.date.getMonth() + 1}. ${a.date.getDate()}.` : ''}${a.comments ? ` · ${icon('msg')}${a.comments}` : ''}</small></span>
+      <span class="alb__txt"><b>${esc(a.title)}</b><small>${a.date ? `${a.date.getFullYear()}. ${a.date.getMonth() + 1}. ${a.date.getDate()}.` : ''}${a.likes ? ` · ${icon('thumb')}${a.likes}` : ''}${a.comments ? ` · ${icon('msg')}${a.comments}` : ''}</small></span>
     </a>`;
   async function viewAlbums() {
     if (!ALBUMS.length) { $app.innerHTML = pageHead('앨범') + emptyState({ ic: 'image', title: '연결된 앨범이 없어요' }); return; }
@@ -2423,9 +2524,11 @@
         ${pics.length ? `${mb >= 8 ? `<p class="hint alb-note">${icon('image')}사진이 커서(${Math.round(mb)}MB) 천천히 보일 수 있어요</p>` : ''}
           <div class="alb-pics">${pics.map((u, i) => `<button type="button" class="alb-pic" data-photo="${i}" aria-label="사진 ${i + 1} 크게 보기"><img src="${esc(u)}" alt="" loading="${i ? 'lazy' : 'eager'}" decoding="async" style="background-image:url('${esc(thumbOf(u))}')" onload="this.classList.add('loaded')"></button>`).join('')}</div>`
           : '<p class="muted">사진이 없어요</p>'}
+        <div class="react">${likeBtn(a.id, a.likes)}<span class="react__hint">마음에 들면 좋아요를 눌러 주세요</span></div>
         <section class="sec" id="comments"></section>
       </article>`;
     $app.querySelectorAll('[data-photo]').forEach((b) => { b.onclick = () => lightbox(pics, Number(b.dataset.photo)); });
+    checkLikes([a.id]);
     drawComments({ id: a.id, comments: a.comments, link: `${location.origin}/#/album/${a.id}` });
   }
 

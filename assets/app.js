@@ -3181,4 +3181,20 @@
       if (was !== isAdmin() && cur === 'attendance') route();
     });
   }
+
+  // 새 버전 자동 적용: 휴대폰에 설치한 앱은 켜 둔 채로 두면 새 버전이 올라와도 그대로라서,
+  // 앱 화면으로 돌아올 때(5분에 한 번까지) app.js가 바뀌었는지 보고, 바뀌었으면 쓰던 글이 없을 때 새로고침
+  let appTag = '';
+  let lastCheck = Date.now();
+  const appVersion = () => fetch('/assets/app.js', { method: 'HEAD', cache: 'no-store' })
+    .then((r) => r.headers.get('ETag') || r.headers.get('Last-Modified') || '').catch(() => '');
+  appVersion().then((t) => { appTag = t; });
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState !== 'visible' || Date.now() - lastCheck < 5 * 60e3 || !appTag) return;
+    lastCheck = Date.now();
+    const t = await appVersion();
+    if (!t || t === appTag) return;
+    if (location.hash.startsWith('#/write') || document.querySelector('.sheet-wrap, textarea:focus, input:focus')) return; // 쓰는 중이면 다음에
+    location.reload();
+  });
 })();

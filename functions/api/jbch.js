@@ -104,13 +104,75 @@ async function me(env, p) {
   const u = r && r.result && typeof r.result === 'object' ? r.result : null;
   if (r.status !== 'ok' || !u) return { status: r.status || 'error', result: typeof r.result === 'string' ? r.result : '회원 정보를 찾지 못했습니다' };
   const userid = String(u.userid || '');
+  // 깨사모 프로필 사진 (항목 이름이 정해져 있지 않아 사진 주소처럼 생긴 값을 찾음)
+  const picKey = Object.keys(u).find((k) => /pic|photo|img|profile/i.test(k) && /^https:\/\//.test(String(u[k] || '')));
+  const pic = picKey ? String(u[picKey]) : (Object.values(u).find((v) => /^https:\/\/[^\s]*member\/profile/.test(String(v || ''))) || '');
   return {
     status: 'ok',
     result: {
-      userid, name: u.username || u.name || '', sex: u.sex || '', church: u.churchname || '',
+      userid, name: u.username || u.name || '', sex: u.sex || '', church: u.churchname || '', pic,
       admin: adminsOf(env).includes(userid.toLowerCase()),
     },
   };
+}
+
+/* ═══ 프로필 사진 ════════════════════════════════
+ * - 깨사모 사진: 회원이 앱을 열 때 주소를 기억해 둠 (pic:아이디) → 다른 회원 글·댓글에도 보이게
+ * - 앱에서 바꾼 사진: 256px로 줄인 JPEG를 KV에 (avatar:아이디). 깨사모 사진은 바뀌지 않음
+ * - 로그인한 회원에게만 돌려줌 (앱 밖으로 공개하지 않음) */
+async function avatars(env, api, p, raw) {
+  const kv = needKV(env);
+  if (kv) return kv;
+  const who = await whoAmI(env, p.hash);
+  if (who.error) return who.error;
+  const id = who.u.userid;
+  if (api === 'avatar_set') {
+    const img = String(raw.image || '');
+    if (!/^data:image\/(jpeg|webp|png);base64,[A-Za-z0-9+/=]+$/.test(img)) return { status: 'error', result: '사진 모양이 올바르지 않아요' };
+    if (img.length > 120000) return { status: 'error', result: '사진이 너무 커요' };
+    await env.CAL.put(`avatar:${id}`, img);
+    return { status: 'ok', result: img };
+  }
+  if (api === 'avatar_del') { await env.CAL.delete(`avatar:${id}`); return { status: 'ok', result: who.u.pic || '' }; }
+  if (api === 'avatar_get') {
+    const ids = (Array.isArray(raw.ids) ? raw.ids : []).map(String).filter((x) => /^[\w.-]{1,40}$/.test(x)).slice(0, 60);
+    const out = {};
+    await Promise.all(ids.map(async (x) => {
+      out[x] = (await env.CAL.get(`avatar:${x}`)) || (await env.CAL.get(`pic:${x}`)) || '';
+    }));
+    return { status: 'ok', result: out };
+  }
+  return { status: 'error', result: `허용되지 않은 API: ${api}` };
+}
+
+/* ═══ 교제록 템플릿 ══════════════════════════════
+ * 자주 쓰는 양식(참석자·말씀·나눔·기도제목·기타)을 이름 붙여 저장 → 어느 기기에서든 불러오기. 한 사람에 10개까지 */
+async function templates(env, api, p, raw) {
+  const kv = needKV(env);
+  if (kv) return kv;
+  const who = await whoAmI(env, p.hash);
+  if (who.error) return who.error;
+  const key = `tpl:${who.u.userid}`;
+  const list = (await env.CAL.get(key, 'json')) || [];
+  if (api === 'tpl_list') return { status: 'ok', result: list };
+  if (api === 'tpl_save') {
+    const name = String(raw.name || '').trim().slice(0, 30);
+    if (!name) return { status: 'error', result: '템플릿 이름을 적어 주세요' };
+    const data = raw.data && typeof raw.data === 'object' ? raw.data : {};
+    const json = JSON.stringify(data);
+    if (json.length > 20000) return { status: 'error', result: '템플릿 내용이 너무 길어요' };
+    const old = list.findIndex((t) => t.name === name);
+    const item = { id: old >= 0 ? list[old].id : crypto.randomUUID().slice(0, 8), name, data: JSON.parse(json), at: new Date().toISOString() };
+    if (old >= 0) list[old] = item; else list.unshift(item);
+    await env.CAL.put(key, JSON.stringify(list.slice(0, 10)));
+    return { status: 'ok', result: list.slice(0, 10) };
+  }
+  if (api === 'tpl_del') {
+    const next = list.filter((t) => t.id !== String(raw.id || ''));
+    await env.CAL.put(key, JSON.stringify(next));
+    return { status: 'ok', result: next };
+  }
+  return { status: 'error', result: `허용되지 않은 API: ${api}` };
 }
 
 // 부서별 명단: Cloudflare 환경 변수 ROSTERS (JSON). 저장소가 공개라 코드에는 넣지 않습니다.
@@ -699,6 +761,8 @@ export async function onRequestPost({ request, env }) {
   // 월정표: 로그인 필요, 값 모양은 calendar() 안에서 직접 확인
   // 번개: 로그인 필요, 형제/자매 게시판은 서버에서 회원정보 성별로 정함
   if (/^push_/.test(api)) return json(await push(env, api, clean, params || {}));
+  if (/^avatar_/.test(api)) return json(await avatars(env, api, clean, params || {}));
+  if (/^tpl_/.test(api)) return json(await templates(env, api, clean, params || {}));
   if (/^bg_/.test(api)) {
     if (!clean.hash) return json({ status: 'error', result: 'hash가 필요합니다' });
     return json(await meetup(env, api, clean, params || {}));
@@ -719,7 +783,14 @@ export async function onRequestPost({ request, env }) {
     if (who.error) return json(who.error);
     // 새 교제록 알림용: 최고 관리자의 로그인 정보로 회원 전용 게시판을 확인 (KV에만, 바뀌었을 때만 저장)
     if (who.superAdmin && env.CAL && (await env.CAL.get('push:reader')) !== clean.hash) await env.CAL.put('push:reader', clean.hash);
-    return json({ status: 'ok', result: { ...who.u, deptAdminOf: who.adminOf, depts: who.viewDepts } });
+    // 깨사모 사진 주소 기억 (다른 회원 화면에도 보이게), 앱에서 바꾼 사진이 있으면 그걸 먼저
+    let pic = who.u.pic || '';
+    if (env.CAL) {
+      if (pic && (await env.CAL.get(`pic:${who.u.userid}`)) !== pic) await env.CAL.put(`pic:${who.u.userid}`, pic);
+      const mine = await env.CAL.get(`avatar:${who.u.userid}`);
+      if (mine) pic = mine;
+    }
+    return json({ status: 'ok', result: { ...who.u, pic, kaesamoPic: who.u.pic || '', hasCustomPic: pic !== (who.u.pic || ''), deptAdminOf: who.adminOf, depts: who.viewDepts } });
   }
   if (api === 'rosters') return json(await rosters(env, clean));
   if (api === 'comment') return json(await comment(env, clean));

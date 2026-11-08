@@ -353,10 +353,13 @@ async function meetup(env, api, p, raw) {
   if (kv) return kv;
   const who = await whoAmI(env, p.hash);
   if (who.error) return who.error;
-  const b = boardOf(who.u);
+  // 형제는 형제 번개, 자매는 자매 번개만. 최고 관리자는 둘 다 골라서 볼 수 있음
+  let b = boardOf(who.u);
+  if (who.superAdmin && ['m', 'f'].includes(raw.board)) b = raw.board;
+  else if (who.superAdmin && !b) b = 'm';
   if (!b) return { status: 'error', result: '깨사모 회원정보에 성별이 없어 번개 게시판을 열 수 없어요' };
   const me = { userid: who.u.userid, name: who.u.name };
-  const base = { board: b, boardName: BOARD_NAME[b] };
+  const base = { board: b, boardName: BOARD_NAME[b], boards: who.superAdmin ? ['m', 'f'] : [b] };
 
   if (api === 'bg_list') {
     const [ms, js] = await Promise.all([listAll(env, `bgm:${b}:`), listAll(env, `bgj:${b}:`)]);
@@ -390,6 +393,8 @@ async function meetup(env, api, p, raw) {
     await env.CAL.put(`bgm:${b}:${next.id}`, JSON.stringify(next), { metadata: summary(next) });
     // 연 사람은 자동으로 참여
     if (!cur) await env.CAL.put(`bgj:${b}:${next.id}:${me.userid}`, '1', { metadata: { name: me.name, at: new Date().toISOString() } });
+    // 새 번개면 같은 쪽(형제/자매) 사람들에게 바로 알림 (연 사람 빼고)
+    if (!cur) await notifyMeetup(env, b, next).catch(() => {});
     return { status: 'ok', result: { id: next.id } };
   }
 
@@ -587,25 +592,47 @@ function pushMessage(found) {
   if (albums.length) parts.push(`앨범 ${albums.length}개`);
   return { title: `새 글 ${found.length}개가 올라왔어요`, body: parts.join(' · '), url: posts.length ? '/#/' : '/#/album' };
 }
-async function pushSendChunk(env, job) {
+// 보내기 작업(pjob:*) 하나를 40명씩 처리. job.board가 있으면 그쪽(형제 m/자매 f) 사람만, job.skip은 뺄 사람(글 연 사람)
+async function pushSendChunk(env, jobKey, job) {
   const k = await vapidKeys(env);
   const page = await env.CAL.list({ prefix: 'psub:', limit: PUSH_CHUNK, ...(job.cursor ? { cursor: job.cursor } : {}) });
   let sent = 0, gone = 0;
   for (const key of page.keys) {
-    const endpoint = key.metadata?.endpoint;
-    if (!endpoint) continue;
+    const md = key.metadata || {};
+    if (!md.endpoint) continue;
+    if (job.board && md.board !== job.board) continue;
+    if (job.skip && md.userid === job.skip) continue;
     try {
-      const res = await fetch(endpoint, { method: 'POST', headers: { TTL: '86400', Urgency: 'normal', Authorization: await vapidAuth(endpoint, k), 'Content-Length': '0' } });
+      const res = await fetch(md.endpoint, { method: 'POST', headers: { TTL: '86400', Urgency: 'normal', Authorization: await vapidAuth(md.endpoint, k), 'Content-Length': '0' } });
       if (res.status === 404 || res.status === 410) { await env.CAL.delete(key.name); gone++; } else if (res.ok) sent++;
     } catch { /* 한 사람 실패는 넘어감 */ }
   }
-  if (page.list_complete) { await env.CAL.delete('push:job'); return { sent, gone, more: false }; }
-  await env.CAL.put('push:job', JSON.stringify({ cursor: page.cursor, at: job.at }));
+  if (page.list_complete) { await env.CAL.delete(jobKey); return { sent, gone, more: false }; }
+  await env.CAL.put(jobKey, JSON.stringify({ ...job, cursor: page.cursor }));
   return { sent, gone, more: true };
 }
+// 남은 보내기 작업이 있으면 한 덩어리 처리 (오래된 작업은 버림)
+async function pushNextJob(env) {
+  const { keys } = await env.CAL.list({ prefix: 'pjob:', limit: 5 });
+  for (const key of keys) {
+    const job = await env.CAL.get(key.name, 'json');
+    if (!job || Date.now() - job.at > PUSH_GAP) { await env.CAL.delete(key.name); continue; }
+    const r = await pushSendChunk(env, key.name, job);
+    return { ...r, more: r.more || keys.length > 1 };
+  }
+  return null;
+}
+// 새 번개: 그쪽 사람들에게 바로 알림 (첫 40명은 지금, 나머지는 예약 작업이 이어서)
+async function notifyMeetup(env, b, m) {
+  const when = m.date ? `${Number(m.date.slice(5, 7))}월 ${Number(m.date.slice(8, 10))}일${m.time ? ` ${m.time}` : ''}` : '';
+  const at = Date.now();
+  await env.CAL.put(`push:latest:bg:${b}`, JSON.stringify({ title: '새 번개가 열렸어요', body: [m.title, when, m.place].filter(Boolean).join(' · '), url: `/#/meetup/${m.id}`, at }));
+  const jobKey = `pjob:bg:${m.id}`;
+  return pushSendChunk(env, jobKey, { cursor: '', at, board: b, skip: m.by?.userid });
+}
 async function pushRun(env) {
-  const job = await env.CAL.get('push:job', 'json');
-  if (job && Date.now() - job.at < PUSH_GAP) return { status: 'ok', result: await pushSendChunk(env, job) };
+  const pending = await pushNextJob(env);
+  if (pending) return { status: 'ok', result: pending };
   const now = Date.now();
   const last = Number(await env.CAL.get('push:lastRun')) || 0;
   if (now - last < PUSH_GAP - 60e3) return { status: 'ok', result: { skip: true, nextInMin: Math.ceil((last + PUSH_GAP - now) / 60e3) } };
@@ -624,12 +651,23 @@ async function pushRun(env) {
   }
   if (!found.length) return { status: 'ok', result: { found: 0, reader: !!reader } };
   await env.CAL.put('push:latest', JSON.stringify({ ...pushMessage(found), at: now }));
-  return { status: 'ok', result: { found: found.length, ...(await pushSendChunk(env, { cursor: '', at: now })) } };
+  return { status: 'ok', result: { found: found.length, ...(await pushSendChunk(env, `pjob:news:${now}`, { cursor: '', at: now })) } };
 }
 async function push(env, api, p, raw) {
   if (!env.CAL) return { status: 'error', result: '알림 저장소(KV)가 연결되지 않았어요' };
   if (api === 'push_key') return { status: 'ok', result: (await vapidKeys(env)).pub };
-  if (api === 'push_latest') return { status: 'ok', result: await env.CAL.get('push:latest', 'json') };
+  if (api === 'push_latest') {
+    // 알림 문구: 새 글 소식과, 이 기기 주인 쪽(형제/자매) 번개 소식 중 더 최근 것
+    const news = await env.CAL.get('push:latest', 'json');
+    const endpoint = String(raw.endpoint || '');
+    let bg = null;
+    if (/^https:\/\//.test(endpoint)) {
+      const got = await env.CAL.getWithMetadata(`psub:${await subId(endpoint)}`);
+      const board = got?.metadata?.board;
+      if (board) bg = await env.CAL.get(`push:latest:bg:${board}`, 'json');
+    }
+    return { status: 'ok', result: (bg && (!news || bg.at > news.at)) ? bg : news };
+  }
   if (api === 'push_run') return pushRun(env);
   if (api === 'push_sub' || api === 'push_unsub') {
     if (!p.hash) return { status: 'error', result: 'hash가 필요합니다' };
@@ -639,7 +677,8 @@ async function push(env, api, p, raw) {
     if (!/^https:\/\/[^\s]+$/.test(endpoint) || endpoint.length > 800) return { status: 'error', result: '알림 주소가 올바르지 않아요' };
     const name = `psub:${await subId(endpoint)}`;
     if (api === 'push_unsub') { await env.CAL.delete(name); return { status: 'ok' }; }
-    await env.CAL.put(name, JSON.stringify({ userid: who.u.userid, at: Date.now() }), { metadata: { endpoint } });
+    // 번개 알림을 같은 쪽에만 보내려고 형제(m)/자매(f)도 함께 저장
+    await env.CAL.put(name, JSON.stringify({ userid: who.u.userid, at: Date.now() }), { metadata: { endpoint, userid: who.u.userid, board: boardOf(who.u) } });
     return { status: 'ok' };
   }
   return { status: 'error', result: `허용되지 않은 API: ${api}` };

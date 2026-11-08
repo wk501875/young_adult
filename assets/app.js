@@ -1634,6 +1634,25 @@
     const sub = reg ? await withTimeout(reg.pushManager.getSubscription(), 8000, 'subscribe').catch(() => null) : null;
     return sub ? 'on' : 'off';
   }
+  // 브라우저별 '알림 허용' 안내 (갤럭시 기본 인터넷 = 삼성 인터넷)
+  const isSamsung = () => /SamsungBrowser/i.test(navigator.userAgent);
+  const isChrome = () => /Chrome\//.test(navigator.userAgent) && !/SamsungBrowser|Edg\/|OPR\/|Whale/i.test(navigator.userAgent);
+  function permGuideHtml() {
+    if (isSamsung()) {
+      return `<p class="sheet__text">삼성 인터넷이 허용 창을 띄우지 않고 있어요. 아래처럼 한 번만 켜 주면 바로 이어서 알림이 켜져요.</p>
+        <ol class="push-steps">
+          <li><b>삼성 인터넷</b> 앱을 열고 아래쪽 <b>≡ 메뉴 → 설정 → 사이트 및 다운로드 → 알림</b></li>
+          <li><b>‘알림 허용’</b>을 켜고, 목록에 <b>young-adult.pages.dev</b>가 있으면 <b>허용</b>으로</li>
+          <li>그래도 안 되면 휴대폰 <b>설정 → 애플리케이션 → 삼성 인터넷(또는 일산교회 청년회) → 알림</b>을 켜기</li>
+          <li>그다음 이 화면으로 돌아와 <b>알림 받기</b>를 다시 눌러 주세요</li>
+        </ol>`;
+    }
+    if (isChrome()) {
+      return `<p class="sheet__text">크롬이 허용 창을 작게 띄웠어요. 아래 위치를 눌러 <b>허용</b>을 골라 주세요. 허용하면 바로 이어서 알림이 켜져요.</p>
+        <ol class="push-steps"><li><b>컴퓨터</b>: 주소창 옆 <b>종 모양 아이콘</b></li><li><b>휴대폰</b>: 화면 <b>아래쪽에 뜬 작은 알림 띠</b> → 관리 → 허용</li><li>안 보이면: 주소창 왼쪽 아이콘 → <b>사이트 설정 → 알림 → 허용</b></li></ol>`;
+    }
+    return '<p class="sheet__text">브라우저 설정의 <b>사이트 설정 → 알림</b>에서 <b>young-adult.pages.dev</b>를 허용으로 바꾼 뒤, <b>알림 받기</b>를 다시 눌러 주세요.</p>';
+  }
   // 알림 켜기가 안 됐을 때: 어느 단계였는지에 따라 다른 안내
   const PUSH_FAIL = {
     perm: '휴대폰에서 알림이 허용되지 않았어요. 다시 누르고 나오는 창에서 <b>허용</b>을 눌러 주세요.',
@@ -1650,37 +1669,43 @@
     pushDiag(step, detail);
     openSheet({
       title: '알림을 켜지 못했어요',
-      body: `<p class="sheet__text">${PUSH_FAIL[step] || PUSH_FAIL.net}</p>${detail ? `<p class="hint">${esc(detail)}</p>` : ''}`,
+      body: ["denied", "perm"].includes(step) ? permGuideHtml() : `<p class="sheet__text">${step === "subscribe" && isSamsung() ? "삼성 인터넷에서 알림 등록이 멈췄어요. 설치한 앱을 완전히 닫았다가 다시 열고 한 번 더 눌러 주세요. 그래도 안 되면 <b>삼성 인터넷 앱</b>에서 young-adult.pages.dev를 열어 <b>내 정보 → 알림 받기</b>를 눌러 주세요 (거기서 켜면 설치한 앱에도 같이 적용돼요)." : (PUSH_FAIL[step] || PUSH_FAIL.net)}</p>${detail ? `<p class="hint">${esc(detail)}</p>` : ""}`,
       actions: [{ label: '알겠어요', value: true, kind: 'primary' }],
     });
   }
   async function pushOn() {
     try {
-      // 크롬은 허용 창을 가운데 팝업 대신 주소창 옆 작은 아이콘(휴대폰은 화면 아래 작은 띠)으로만 띄울 때가 있음.
-      // 그러면 대답이 올 때까지 끝없이 기다리므로, 8초 지나면 어디를 누르면 되는지 알려 주고 계속 기다림 (최대 2분)
-      const permP = Promise.resolve(Notification.requestPermission());
-      let perm = await Promise.race([permP, new Promise((ok) => setTimeout(() => ok('pending'), 8000))]);
+      // 허용 요청과 알림 등록을 동시에 시작함. 삼성 인터넷(특히 설치한 앱)은 허용 요청엔 대답이 없다가
+      // 등록을 시도할 때 허용 창을 띄우기도 하고, 크롬은 허용 창을 작게만 띄우기도 함
+      const permP = Promise.resolve(Notification.requestPermission()).catch(() => Notification.permission);
+      const keyP = withTimeout(callApi('push_key'), 12000, 'net');
+      const subscribeNow = async () => {
+        const k = await keyP;
+        if (k.status !== 'ok') throw Object.assign(new Error(errText(k)), { step: 'net' });
+        const reg = await readyReg();
+        const key = keyBytes(k.result);
+        let sub = await withTimeout(reg.pushManager.getSubscription(), 8000, 'subscribe');
+        // 예전 열쇠로 등록된 구독이면 지우고 새로 (열쇠가 다르면 등록이 실패함)
+        const oldKey = sub?.options?.applicationServerKey;
+        if (sub && oldKey && new Uint8Array(oldKey).join() !== key.join()) { await sub.unsubscribe().catch(() => {}); sub = null; }
+        return sub || reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+      };
+      const early = subscribeNow();
+      early.catch(() => {});
+      const never = new Promise(() => {});
+      const subOk = early.then(() => 'granted', () => never); // 등록이 먼저 되면 허용된 것
+      let perm = await Promise.race([permP, subOk, new Promise((ok) => setTimeout(() => ok('pending'), 8000))]);
       let guide = null;
       if (perm === 'pending') {
-        guide = openSheet({
-          title: '허용 창이 작게 떠 있어요',
-          body: `<p class="sheet__text">브라우저가 허용 창을 작게 띄웠어요. 아래 위치를 눌러 <b>허용</b>을 골라 주세요. 허용하면 바로 이어서 알림이 켜져요.</p>
-            <ol class="push-steps"><li><b>컴퓨터 크롬</b>: 주소창 오른쪽(또는 왼쪽)의 <b>종 모양 아이콘</b></li><li><b>휴대폰 크롬</b>: 화면 <b>아래쪽에 뜬 작은 알림 띠</b> → 관리 → 허용</li><li>안 보이면: 주소창 왼쪽 아이콘 → <b>사이트 설정 → 알림 → 허용</b></li></ol>`,
-          actions: [{ label: '닫기', value: false }],
-        });
-        perm = await Promise.race([permP, new Promise((ok) => setTimeout(() => ok(Notification.permission), 120000))]);
+        guide = openSheet({ title: '알림 허용이 필요해요', body: permGuideHtml(), actions: [{ label: '닫기', value: false }] });
+        perm = await Promise.race([permP, subOk, new Promise((ok) => setTimeout(() => ok(Notification.permission), 120000))]);
         guide.close();
       }
+      if (Notification.permission === 'granted') perm = 'granted';
       if (perm !== 'granted') { if (perm !== 'default' || !guide) pushFailed(perm === 'denied' ? 'denied' : 'perm'); else pushDiag('perm', 'no-answer'); return false; }
-      const k = await withTimeout(callApi('push_key'), 12000, 'net');
-      if (k.status !== 'ok') { pushFailed('net', errText(k)); return false; }
-      const reg = await readyReg();
-      const key = keyBytes(k.result);
-      let sub = await withTimeout(reg.pushManager.getSubscription(), 8000, 'subscribe');
-      // 예전 열쇠로 등록된 구독이면 지우고 새로 (열쇠가 다르면 등록이 실패함)
-      const oldKey = sub?.options?.applicationServerKey;
-      if (sub && oldKey && new Uint8Array(oldKey).join() !== key.join()) { await sub.unsubscribe().catch(() => {}); sub = null; }
-      if (!sub) sub = await withTimeout(reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }), 20000, 'subscribe');
+      // 허용된 뒤 등록 (처음 시도가 허용 전이라 실패했으면 한 번 더)
+      let sub = await withTimeout(early, 20000, 'subscribe').catch(() => null);
+      if (!sub) sub = await withTimeout(subscribeNow(), 20000, 'subscribe');
       const r = await withTimeout(callApi('push_sub', { sub: sub.toJSON() }), 12000, 'net');
       if (r.status !== 'ok') { pushFailed('net', errText(r)); return false; }
       store.set('pushSubV', 2);
@@ -1774,7 +1799,7 @@
     const HINT = {
       on: '알림을 받고 있어요 · 새 글은 50분마다 확인해요',
       off: '교제록·포토스토리·앨범·번개가 올라오면 휴대폰으로 알려 드려요',
-      denied: '이 기기에서 알림을 막아 두었어요. 브라우저 설정에서 이 사이트 알림을 허용해 주세요',
+      denied: isSamsung() ? '알림이 막혀 있어요. 삼성 인터넷 ≡ 메뉴 → 설정 → 사이트 및 다운로드 → 알림에서 young-adult.pages.dev를 허용해 주세요' : '이 기기에서 알림을 막아 두었어요. 브라우저 설정에서 이 사이트 알림을 허용해 주세요',
       'ios-install': '아이폰은 Safari 아래 공유 버튼 → ‘홈 화면에 추가’를 누른 뒤, 홈 화면의 앱으로 열어야 알림을 받을 수 있어요',
       unsupported: '이 브라우저는 알림을 지원하지 않아요',
       inapp: '카카오톡 같은 앱 안에서 열린 화면이라 알림을 받을 수 없어요. 메뉴의 ‘다른 브라우저로 열기’로 크롬이나 Safari에서 열어 주세요',

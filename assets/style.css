@@ -1195,3 +1195,4 @@ body { overflow-x: clip; }
 .memo__note { margin: 10px 0 0; font-size: 14px; color: var(--text-2); }
 .memo__note b { color: var(--text); margin-right: 4px; }
 @media (max-width: 560px) { .memo { padding: 16px; } .memo__block { padding: 12px; } .memo__table { font-size: 13.5px; } }
+body.no-panel .main > * { max-width: 1040px; }

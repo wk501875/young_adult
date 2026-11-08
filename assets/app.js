@@ -488,6 +488,16 @@
   // 교회 서버(file*.jbch.org)는 올린 사진마다 600px짜리 작은 그림(sum_파일이름)을 만들어 둠.
   // 원본은 4000~5700px·수 MB라 느린 데이터에선 안 보일 수 있어서, 목록·카드엔 작은 그림을 쓰고 원본은 크게 볼 때만
   const thumbUrl = (u) => (/^https:\/\/file\d*\.jbch\.org\//.test(String(u)) && !/\/sum_[^/]+$/.test(u) ? String(u).replace(/\/([^/]+)$/, '/sum_$1') : String(u || ''));
+  // 글 안에서는 선명하게: 작은 그림으로 먼저 보여 주고, 원본이 다 내려오면 바꿔 끼움 (위에서부터 한 장씩)
+  async function sharpen(root) {
+    if (!root) return;
+    for (const img of root.querySelectorAll('img[data-full]')) {
+      const full = img.dataset.full;
+      const got = await new Promise((ok) => { const big = new Image(); big.onload = () => ok(true); big.onerror = () => ok(false); big.src = full; });
+      if (got && img.isConnected) { img.src = full; img.removeAttribute('data-full'); }
+      if (!root.isConnected) return;
+    }
+  }
   // 사진이 다 내려오면 흐릿한 상태에서 또렷하게 / 작은 그림이 없으면 원본으로, 그것도 안 되면 빈칸 대신 바탕만
   const imgTag = (src, alt = '') => {
     const t = thumbUrl(src);
@@ -815,6 +825,7 @@
         ${newer ? `<a class="pager__next" href="#/post/${encodeURIComponent(newer.id)}"><span><small>다음 글</small>${esc(newer.title)}</span>${icon('right')}</a>` : ''}
       </nav>` : ''}`;
     $app.querySelectorAll('[data-photo]').forEach((b) => { b.onclick = () => lightbox(p.photos, Number(b.dataset.photo)); });
+    sharpen($app.querySelector('.gallery'));
     bindPrayerMore($app);
     drawComments(p);
   }

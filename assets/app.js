@@ -1642,7 +1642,12 @@
     sw: '알림 기능을 준비하지 못했어요. 이 화면을 <b>새로고침</b>한 뒤 다시 눌러 주세요.',
     subscribe: '이 브라우저에서 알림 등록이 멈췄어요. 휴대폰 기본 인터넷(삼성 인터넷 등)으로 열었다면 <b>크롬</b>으로 열어서 다시 해 주세요. 아이폰은 <b>홈 화면에 추가한 앱</b>에서 해 주세요.',
   };
+  // 알림 켜기가 실패하면 어느 단계에서 막혔는지만 서버에 짧게 남김 (기기 종류·단계·오류 이름, 개인정보 없음)
+  function pushDiag(step, detail = '') {
+    callApi('push_diag', { step: String(step).slice(0, 20), detail: String(detail).slice(0, 120), ua: navigator.userAgent.slice(0, 200), standalone: isStandalone() ? '1' : '0' }).catch(() => {});
+  }
   function pushFailed(step, detail = '') {
+    pushDiag(step, detail);
     openSheet({
       title: '알림을 켜지 못했어요',
       body: `<p class="sheet__text">${PUSH_FAIL[step] || PUSH_FAIL.net}</p>${detail ? `<p class="hint">${esc(detail)}</p>` : ''}`,
@@ -1651,8 +1656,22 @@
   }
   async function pushOn() {
     try {
-      const perm = await Notification.requestPermission();
-      if (perm !== 'granted') { pushFailed(perm === 'denied' ? 'denied' : 'perm'); return false; }
+      // 크롬은 허용 창을 가운데 팝업 대신 주소창 옆 작은 아이콘(휴대폰은 화면 아래 작은 띠)으로만 띄울 때가 있음.
+      // 그러면 대답이 올 때까지 끝없이 기다리므로, 8초 지나면 어디를 누르면 되는지 알려 주고 계속 기다림 (최대 2분)
+      const permP = Promise.resolve(Notification.requestPermission());
+      let perm = await Promise.race([permP, new Promise((ok) => setTimeout(() => ok('pending'), 8000))]);
+      let guide = null;
+      if (perm === 'pending') {
+        guide = openSheet({
+          title: '허용 창이 작게 떠 있어요',
+          body: `<p class="sheet__text">브라우저가 허용 창을 작게 띄웠어요. 아래 위치를 눌러 <b>허용</b>을 골라 주세요. 허용하면 바로 이어서 알림이 켜져요.</p>
+            <ol class="push-steps"><li><b>컴퓨터 크롬</b>: 주소창 오른쪽(또는 왼쪽)의 <b>종 모양 아이콘</b></li><li><b>휴대폰 크롬</b>: 화면 <b>아래쪽에 뜬 작은 알림 띠</b> → 관리 → 허용</li><li>안 보이면: 주소창 왼쪽 아이콘 → <b>사이트 설정 → 알림 → 허용</b></li></ol>`,
+          actions: [{ label: '닫기', value: false }],
+        });
+        perm = await Promise.race([permP, new Promise((ok) => setTimeout(() => ok(Notification.permission), 120000))]);
+        guide.close();
+      }
+      if (perm !== 'granted') { if (perm !== 'default' || !guide) pushFailed(perm === 'denied' ? 'denied' : 'perm'); else pushDiag('perm', 'no-answer'); return false; }
       const k = await withTimeout(callApi('push_key'), 12000, 'net');
       if (k.status !== 'ok') { pushFailed('net', errText(k)); return false; }
       const reg = await readyReg();

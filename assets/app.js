@@ -358,6 +358,7 @@
     pin: '<path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/>',
     zap: '<path d="M13.5 2.5 4.5 13.5h7l-1 8 9-11h-7z"/>',
     wifi: '<path d="M2.5 9a14 14 0 0 1 19 0"/><path d="M5.5 12.5a9.5 9.5 0 0 1 13 0"/><path d="M9 16a4.5 4.5 0 0 1 6 0"/><path d="M12 19.5v.1"/><path d="M3 3l18 18"/>',
+    bell: '<path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
   };
   const icon = (name, cls = '') => `<svg class="ic ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
   const spinner = '<span class="spin" aria-hidden="true"></span>';
@@ -456,9 +457,13 @@
     layer.appendChild(el);
     const $img = el.querySelector('.lb__img');
     const show = () => {
+      // 작은 그림을 먼저 보여 주고, 원본이 다 내려오면 바꿔치기 (느린 데이터에서도 바로 보이게)
+      const full = list[i], small = thumbUrl(full);
       $img.classList.remove('loaded');
       $img.onload = () => $img.classList.add('loaded');
-      $img.src = list[i];
+      $img.onerror = () => { if ($img.src !== full) $img.src = full; };
+      $img.src = small;
+      if (small !== full) { const big = new Image(); big.onload = () => { if (list[i] === full) $img.src = full; }; big.src = full; }
       el.querySelector('.lb__count').textContent = list.length > 1 ? `${i + 1} / ${list.length}` : '';
     };
     const go = (d) => { i = (i + d + list.length) % list.length; show(); };
@@ -480,8 +485,14 @@
     show();
     requestAnimationFrame(() => el.classList.add('open'));
   }
-  // 사진이 다 내려오면 흐릿한 상태에서 또렷하게
-  const imgTag = (src, alt = '') => `<img src="${esc(src)}" alt="${esc(alt)}" loading="lazy" decoding="async" onload="this.classList.add('loaded')">`;
+  // 교회 서버(file*.jbch.org)는 올린 사진마다 600px짜리 작은 그림(sum_파일이름)을 만들어 둠.
+  // 원본은 4000~5700px·수 MB라 느린 데이터에선 안 보일 수 있어서, 목록·카드엔 작은 그림을 쓰고 원본은 크게 볼 때만
+  const thumbUrl = (u) => (/^https:\/\/file\d*\.jbch\.org\//.test(String(u)) && !/\/sum_[^/]+$/.test(u) ? String(u).replace(/\/([^/]+)$/, '/sum_$1') : String(u || ''));
+  // 사진이 다 내려오면 흐릿한 상태에서 또렷하게 / 작은 그림이 없으면 원본으로, 그것도 안 되면 빈칸 대신 바탕만
+  const imgTag = (src, alt = '') => {
+    const t = thumbUrl(src);
+    return `<img src="${esc(t)}"${t !== src ? ` data-full="${esc(src)}"` : ''} alt="${esc(alt)}" loading="lazy" decoding="async" onload="this.classList.add('loaded')" onerror="if(this.dataset.full&&this.src!==this.dataset.full){this.src=this.dataset.full}else{this.classList.add('loaded','is-broken')}">`;
+  };
 
   /* ─── 공통 조각 ─── */
   const pageHead = (title, sub = '', right = '') =>
@@ -1419,6 +1430,43 @@
     const sub = await reg?.pushManager.getSubscription();
     if (sub) { await callApi('push_unsub', { sub: { endpoint: sub.endpoint } }); await sub.unsubscribe().catch(() => {}); }
     toast('알림을 껐어요');
+  }
+  /* 알림은 기본으로 켜는 쪽: 처음 들어오면 앱이 먼저 물어보고, '알림 받기'를 누르면 휴대폰 권한 창이 뜸.
+   * (브라우저 규칙상 사람이 직접 누르기 전엔 권한을 받을 수 없음)
+   * - 이미 허용했는데 구독만 빠진 기기는 조용히 다시 켬
+   * - '나중에'는 7일 뒤 다시, 아이폰 Safari는 홈 화면에 추가 안내를 14일에 한 번 */
+  async function maybeAskPush() {
+    const st = await pushState();
+    if (st === 'off' && Notification.permission === 'granted') {
+      const k = await callApi('push_key');
+      const reg = await swReady();
+      if (k.status !== 'ok' || !reg) return;
+      await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(k.result) }).catch(() => null);
+      if (sub) callApi('push_sub', { sub: sub.toJSON() });
+      return;
+    }
+    const later = store.get('pushAskLater', 0);
+    if (!['off', 'ios-install'].includes(st) || Date.now() < later) return;
+    if (document.querySelector('.sheet-wrap, .coach')) return; // 다른 안내가 떠 있으면 다음에
+    if (st === 'ios-install') {
+      store.set('pushAskLater', Date.now() + 14 * 86400e3);
+      await openSheet({
+        title: '새 글 알림 받기',
+        body: `<p class="sheet__text">아이폰은 앱처럼 설치해야 알림을 받을 수 있어요.</p>
+          <ol class="push-steps"><li>Safari 아래쪽 <b>공유 버튼</b>을 눌러요</li><li><b>‘홈 화면에 추가’</b>를 눌러요</li><li>홈 화면에 생긴 <b>교회당 아이콘</b>으로 열면 알림을 켜는 창이 나와요</li></ol>`,
+        actions: [{ label: '알겠어요', value: true, kind: 'primary' }],
+      }).result;
+      return;
+    }
+    const yes = await openSheet({
+      title: '새 글 알림 받기',
+      body: '<p class="sheet__text">교제록·포토스토리·앨범이 올라오면 휴대폰으로 알려 드려요. <b>알림 받기</b>를 누른 뒤 나오는 창에서 <b>허용</b>을 눌러 주세요.</p><p class="hint">내 정보에서 언제든 끌 수 있어요</p>',
+      actions: [{ label: '나중에', value: false }, { label: '알림 받기', value: true, kind: 'primary', icon: 'bell' }],
+    }).result;
+    if (!yes) { store.set('pushAskLater', Date.now() + 7 * 86400e3); return; }
+    await pushOn();
+    if (Notification.permission === 'denied') store.set('pushAskLater', Date.now() + 365 * 86400e3);
   }
   async function drawPushCard() {
     const $b = document.getElementById('pushBtn');
@@ -2634,8 +2682,9 @@
 
   /* ─── 라우터 ─── */
   let prevName = null;
-  /* 화면 전환: 탭끼리는 페이드 스루, 글·앨범·번개로 들어갈 땐 푸시(오른쪽에서), 나올 땐 반대로.
-   * 바뀌는 건 가운데(#app)만 — 위쪽 바·메뉴·아래 탭은 그대로. 지원 안 되는 브라우저·동작 줄이기 설정이면 그냥 바뀜 */
+  /* 화면 전환: 탭끼리는 살짝 떠오르며 나타나고(페이드), 글·앨범·번개로 들어갈 땐 오른쪽에서(푸시), 나올 땐 왼쪽에서.
+   * 예전 화면을 찍어 두는 방식(View Transitions)은 휴대폰에서 끊겨서, 새 화면만 가볍게 움직임.
+   * 바뀌는 건 가운데(#app)만. '동작 줄이기' 설정이면 그냥 바뀜 */
   let vtTop = null, vtDepth = 0;
   function route() {
     const [name, ...rest] = location.hash.replace(/^#\/?/, '').split('/');
@@ -2648,10 +2697,11 @@
       else if (top !== vtTop || depth === 1) kind = 'fade';
     }
     vtTop = auth.hash ? top : null; vtDepth = depth;
-    if (!kind || !document.startViewTransition || reduceMotion()) return renderRoute();
-    document.documentElement.dataset.vt = kind;
-    const t = document.startViewTransition(() => { renderRoute(); });
-    t.finished.finally(() => { delete document.documentElement.dataset.vt; });
+    renderRoute();
+    if (!kind || reduceMotion()) return;
+    $app.classList.remove('vt-fade', 'vt-push', 'vt-pop');
+    void $app.offsetWidth; // 같은 효과를 다시 시작하려면 한 번 끊어 줘야 함
+    $app.classList.add(`vt-${kind}`);
   }
   function renderRoute() {
     const locked = !auth.hash;
@@ -2698,6 +2748,7 @@
 
   route();
   if (auth.hash) swReady(); // 알림용 서비스 워커 (알림을 켠 기기에서 계속 받으려면 등록돼 있어야 함)
+  if (auth.hash) setTimeout(() => { if (auth.hash) maybeAskPush().catch(() => {}); }, 2500); // 들어오고 잠시 뒤 알림 받을지 물어봄
 
   // 로그인돼 있으면 이름·관리자 여부를 새로 받아 둠 (관리자 목록이 바뀌어도 반영되도록)
   if (auth.hash) {

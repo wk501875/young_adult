@@ -1114,26 +1114,6 @@ button.evt { width: calc(100% + 16px); border: 0; background: none; font: inheri
 .tag--new, .story__badge { background: var(--lime); color: var(--lime-ink); }
 .cal__d.is-today { background: var(--lime); color: var(--lime-ink); box-shadow: none; }
 
-/* ═══ 화면 전환 (View Transitions) ═══════════════
- * 탭끼리: 페이드 스루(살짝 사라졌다 살짝 커지며 나타남)
- * 글·앨범·번개로 들어갈 때: 푸시(오른쪽에서 밀려 들어옴) / 나올 때: 반대
- * 가운데(#app)만 움직이고 위쪽 바·메뉴·아래 탭은 그대로 */
-#app { view-transition-name: main; }
-::view-transition-old(root), ::view-transition-new(root) { animation: none; }
-::view-transition-group(main) { animation: none; }
-:root[data-vt="fade"]::view-transition-old(main) { animation: vt-out .09s ease-in both; }
-:root[data-vt="fade"]::view-transition-new(main) { animation: vt-in-zoom .22s .07s var(--ease) both; }
-:root[data-vt="push"]::view-transition-old(main) { animation: vt-out-left .2s ease-in both; }
-:root[data-vt="push"]::view-transition-new(main) { animation: vt-in-right .28s var(--ease) both; }
-:root[data-vt="pop"]::view-transition-old(main) { animation: vt-out-right .2s ease-in both; }
-:root[data-vt="pop"]::view-transition-new(main) { animation: vt-in-left .28s var(--ease) both; }
-@keyframes vt-out { to { opacity: 0; } }
-@keyframes vt-in-zoom { from { opacity: 0; transform: scale(.985); } }
-@keyframes vt-out-left { to { opacity: 0; transform: translateX(-24px); } }
-@keyframes vt-in-right { from { opacity: 0; transform: translateX(36px); } }
-@keyframes vt-out-right { to { opacity: 0; transform: translateX(36px); } }
-@keyframes vt-in-left { from { opacity: 0; transform: translateX(-24px); } }
-@media (prefers-reduced-motion: reduce) { #app { view-transition-name: none; } }
 
 /* 앨범 새 글 딱지 */
 .alb__pic { position: relative; }
@@ -1144,3 +1124,18 @@ img.mark { width: auto; height: 36px; border-radius: 0; background: none; box-sh
 [data-theme="dark"] img.mark { filter: drop-shadow(0 0 .7px rgba(255, 255, 255, .5)); }
 @media (max-width: 860px) { img.mark { height: 30px; } }
 .login__brand img.mark { height: 72px; margin: 0 auto 14px; box-shadow: none; }
+img.is-broken { visibility: hidden; }
+
+/* ═══ 화면 전환 ═══════════════════════════════
+ * 새 화면만 짧게 움직임 (transform·opacity만이라 휴대폰에서도 부드러움).
+ * 끝나면 transform이 남지 않게 backwards — 남으면 안의 고정·sticky 요소가 깨짐 */
+#app.vt-fade { animation: vt-fade .26s var(--ease) backwards; }
+#app.vt-push { animation: vt-push .3s var(--ease) backwards; }
+#app.vt-pop { animation: vt-pop .3s var(--ease) backwards; }
+@keyframes vt-fade { from { opacity: 0; transform: translateY(8px); } }
+@keyframes vt-push { from { opacity: 0; transform: translateX(28px); } }
+@keyframes vt-pop { from { opacity: 0; transform: translateX(-20px); } }
+@media (prefers-reduced-motion: reduce) { #app.vt-fade, #app.vt-push, #app.vt-pop { animation: none; } }
+.push-steps { margin: 10px 0 0; padding-left: 20px; display: grid; gap: 6px; color: var(--text-2); font-size: 15px; }
+.push-steps b { color: var(--text); }
+body { overflow-x: clip; }

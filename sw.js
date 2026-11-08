@@ -7,7 +7,9 @@ self.addEventListener('push', (e) => {
   e.waitUntil((async () => {
     let m = { title: '일산교회 청년회', body: '새 글이 올라왔어요', url: '/' };
     try {
-      const r = await fetch('/api/jbch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api: 'push_latest' }) });
+      // 이 기기의 알림 주소를 같이 보내면, 서버가 형제/자매 쪽에 맞는 번개 소식을 골라 줌
+      const sub = await self.registration.pushManager.getSubscription();
+      const r = await fetch('/api/jbch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ api: 'push_latest', params: { endpoint: sub ? sub.endpoint : '' } }) });
       const j = await r.json();
       if (j.status === 'ok' && j.result && j.result.title) m = j.result;
     } catch (err) { /* 문구를 못 받아도 기본 문구로 알림 */ }

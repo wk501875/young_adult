@@ -1501,6 +1501,7 @@
     } catch { toast('이 기기에서는 알림을 켤 수 없어요', { tone: 'error' }); return; }
     const r = await callApi('push_sub', { sub: sub.toJSON() });
     if (r.status !== 'ok') { toast(`알림을 켜지 못했어요: ${errText(r)}`, { tone: 'error' }); return; }
+    store.set('pushSubV', 2);
     toast('알림을 켰어요. 지금 시험 알림을 하나 보내 드려요');
     await testPush();
     return true;
@@ -1511,7 +1512,7 @@
     if (!reg || Notification.permission !== 'granted') return;
     await navigator.serviceWorker.ready;
     await reg.showNotification('알림이 켜졌어요', {
-      body: '새 교제록·포토스토리·앨범이 올라오면 이렇게 알려 드려요. 누르면 그 글로 바로 가요.',
+      body: '새 교제록·포토스토리·앨범·번개가 올라오면 이렇게 알려 드려요. 누르면 그 글로 바로 가요.',
       icon: '/assets/icon-192.png', badge: '/assets/icon-192.png', tag: 'ya-test', data: { url: '/#/settings' },
     }).catch(() => {});
   }
@@ -1527,6 +1528,12 @@
    * - '나중에'는 7일 뒤 다시, 아이폰 Safari는 홈 화면에 추가 안내를 14일에 한 번 */
   async function maybeAskPush() {
     const st = await pushState();
+    // 예전에 켠 기기: 형제/자매 정보가 함께 저장되도록 한 번만 다시 등록 (번개 알림용)
+    if (st === 'on' && store.get('pushSubV', 0) < 2) {
+      const sub = await (await swReady())?.pushManager.getSubscription();
+      if (sub && (await callApi('push_sub', { sub: sub.toJSON() })).status === 'ok') store.set('pushSubV', 2);
+      return;
+    }
     if (st === 'off' && Notification.permission === 'granted') {
       const k = await callApi('push_key');
       const reg = await swReady();
@@ -1553,7 +1560,7 @@
     }
     const yes = await openSheet({
       title: '새 글 알림 받기',
-      body: '<p class="sheet__text">교제록·포토스토리·앨범이 올라오면 휴대폰으로 알려 드려요. <b>알림 받기</b>를 누른 뒤 나오는 창에서 <b>허용</b>을 눌러 주세요.</p><p class="hint">내 정보에서 언제든 끌 수 있어요</p>',
+      body: '<p class="sheet__text">교제록·포토스토리·앨범·번개가 올라오면 휴대폰으로 알려 드려요. <b>알림 받기</b>를 누른 뒤 나오는 창에서 <b>허용</b>을 눌러 주세요.</p><p class="hint">내 정보에서 언제든 끌 수 있어요</p>',
       actions: [{ label: '나중에', value: false }, { label: '알림 받기', value: true, kind: 'primary', icon: 'bell' }],
     }).result;
     if (!yes) { store.set('pushAskLater', Date.now() + 7 * 86400e3); return; }
@@ -1576,7 +1583,7 @@
     const st = await pushState();
     const HINT = {
       on: '알림을 받고 있어요 · 새 글은 50분마다 확인해요',
-      off: '교제록·포토스토리·앨범이 올라오면 휴대폰으로 알려 드려요',
+      off: '교제록·포토스토리·앨범·번개가 올라오면 휴대폰으로 알려 드려요',
       denied: '이 기기에서 알림을 막아 두었어요. 브라우저 설정에서 이 사이트 알림을 허용해 주세요',
       'ios-install': '아이폰은 Safari 아래 공유 버튼 → ‘홈 화면에 추가’를 누른 뒤, 홈 화면의 앱으로 열어야 알림을 받을 수 있어요',
       unsupported: '이 브라우저는 알림을 지원하지 않아요',
@@ -1628,7 +1635,7 @@
         </div>
       </section>
       <section class="card setting" id="pushCard">
-        <span><b>새 글 알림</b><small id="pushHint">교제록·포토스토리·앨범이 올라오면 휴대폰으로 알려 드려요</small></span>
+        <span><b>새 글 알림</b><small id="pushHint">교제록·포토스토리·앨범·번개가 올라오면 휴대폰으로 알려 드려요</small></span>
         <button type="button" class="btn btn--sm" id="pushBtn" disabled>확인 중</button>
       </section>
       <div class="list-card card">
@@ -2186,9 +2193,8 @@
   const myBgBoard = () => (/자매|여/.test(auth.me?.sex || '') ? 'f' : /형제|남/.test(auth.me?.sex || '') ? 'm' : '');
   const bgApi = (api, params = {}) => callApi(api, { ...params, ...(isAdmin() && bgBoard ? { board: bgBoard } : {}) });
   async function viewMeetups() {
-    const guess = (isAdmin() && bgBoard) || myBgBoard();
     $app.innerHTML = `
-      <header class="page-head"><div><h1 id="bgTitle">${guess ? `${BG_NAME[guess]} 번개` : '번개'}</h1><p>함께 밥 먹고, 운동하고, 놀러 가요</p></div>
+      <header class="page-head"><div><h1>번개</h1></div>
         <button type="button" class="btn btn--primary btn--sm" id="bgNew">${icon('plus')}번개 열기</button></header>
       <div id="bgBoards"></div>
       <div class="seg seg--full" id="bgTabs" role="group" aria-label="번개 보기">
@@ -2202,11 +2208,10 @@
     const $l = document.getElementById('bgList');
     if (!$l) return;
     if (r.status !== 'ok') { $l.innerHTML = emptyState({ ic: 'alert', title: '번개를 불러오지 못했어요', desc: esc(errText(r)) }); return; }
-    document.getElementById('bgTitle').textContent = `${r.boardName} 번개`;
     // 최고 관리자: 형제 번개 / 자매 번개 바꿔 보기
     if ((r.boards || []).length > 1) {
       const $bb = document.getElementById('bgBoards');
-      $bb.innerHTML = `<div class="chips chips--tight bg-boards" role="group" aria-label="게시판 고르기">${r.boards.map((k) => `<button type="button" class="chip" data-b="${k}" aria-pressed="${k === r.board}">${BG_NAME[k]} 번개</button>`).join('')}<span class="hint">관리자만 둘 다 볼 수 있어요</span></div>`;
+      $bb.innerHTML = `<div class="chips chips--tight bg-boards" role="group" aria-label="게시판 고르기">${r.boards.map((k) => `<button type="button" class="chip" data-b="${k}" aria-pressed="${k === r.board}">${BG_NAME[k]} 번개</button>`).join('')}</div>`;
       $bb.onclick = (e) => { const c = e.target.closest('[data-b]'); if (c && c.dataset.b !== r.board) { bgBoard = c.dataset.b; store.set('bgBoard', bgBoard); viewMeetups(); } };
     }
     const today = ymd(new Date());

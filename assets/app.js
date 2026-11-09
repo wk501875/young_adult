@@ -315,7 +315,7 @@
    * 화면 (UI)
    * ════════════════════════════════════════════════════════════ */
   const APP = C.appName || '일산교회 청년회';
-  const APP_VERSION = '11.09-c'; // 내 정보 맨 아래에 보임 (휴대폰이 새 버전을 받았는지 확인용)
+  const APP_VERSION = '11.09-d'; // 내 정보 맨 아래에 보임 (휴대폰이 새 버전을 받았는지 확인용)
   // 화면 밝기 (기본: 밝게)
   const darkMQ = window.matchMedia('(prefers-color-scheme: dark)');
   function applyTheme() {
@@ -1676,8 +1676,7 @@
   }
   async function pushOn() {
     try {
-      // 허용 요청과 알림 등록을 동시에 시작함. 삼성 인터넷(특히 설치한 앱)은 허용 요청엔 대답이 없다가
-      // 등록을 시도할 때 허용 창을 띄우기도 하고, 크롬은 허용 창을 작게만 띄우기도 함
+      // 허용 → 등록 → 서버 저장 순서로. 크롬은 허용 창을 작게만 띄우기도 해서 8초 뒤 안내
       // 허용 요청: 새 방식(Promise)과 옛 방식(콜백) 둘 다로 대답을 기다림.
       // 갤럭시 삼성 인터넷은 옛 방식으로만 대답하고 새 방식은 끝까지 대답이 없어서, 앱이 '잠시만요'에 멈췄었음.
       // 그래도 대답이 없을 때를 대비해 권한 값이 바뀌는지도 0.5초마다 확인
@@ -1703,23 +1702,18 @@
         if (sub && oldKey && new Uint8Array(oldKey).join() !== key.join()) { await sub.unsubscribe().catch(() => {}); sub = null; }
         return sub || reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
       };
-      const early = subscribeNow();
-      early.catch(() => {});
-      const never = new Promise(() => {});
-      const subOk = early.then(() => 'granted', () => never); // 등록이 먼저 되면 허용된 것
-      let perm = await Promise.race([permP, subOk, new Promise((ok) => setTimeout(() => ok('pending'), 8000))]);
+      // 허용을 먼저 받고, 등록은 그다음에 (동시에 하면 삼성 인터넷이 허용 대답을 안 함)
+      let perm = await Promise.race([permP, new Promise((ok) => setTimeout(() => ok('pending'), 8000))]);
       let guide = null;
       if (perm === 'pending') {
         guide = openSheet({ title: '알림 허용이 필요해요', body: permGuideHtml(), actions: [{ label: '닫기', value: false }] });
-        perm = await Promise.race([permP, subOk, new Promise((ok) => setTimeout(() => ok(Notification.permission), 120000))]);
+        perm = await Promise.race([permP, new Promise((ok) => setTimeout(() => ok(Notification.permission), 120000))]);
         guide.close();
       }
       if (Notification.permission === 'granted') perm = 'granted';
       if (perm !== 'granted') { if (perm !== 'default' || !guide) pushFailed(perm === 'denied' ? 'denied' : 'perm'); else pushDiag('perm', 'no-answer'); return false; }
-      // 허용된 뒤 등록 (처음 시도가 허용 전이라 실패했으면 한 번 더)
       pushDiag('perm-ok', perm);
-      let sub = await withTimeout(early, 20000, 'subscribe').catch(() => null);
-      if (!sub) sub = await withTimeout(subscribeNow(), 20000, 'subscribe');
+      const sub = await withTimeout(subscribeNow(), 20000, 'subscribe');
       pushDiag('sub-ok', String(sub.endpoint || '').split('/')[2] || '');
       const r = await withTimeout(callApi('push_sub', { sub: sub.toJSON() }), 12000, 'net');
       if (r.status !== 'ok') { pushFailed('net', errText(r)); return false; }

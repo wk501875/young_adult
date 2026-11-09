@@ -3093,6 +3093,7 @@
       auth.set(r.hash, m.status === 'ok' ? m.result : null);
       store.set('lastUserid', userid);
       route();
+      armHistory(); // 로그인하자마자도 뒤로가기가 앱처럼
       toast(`${m.result?.name ? m.result.name + '님, ' : ''}반가워요`);
     };
   }
@@ -3150,6 +3151,76 @@
     return viewList({ restore });
   }
   window.addEventListener('hashchange', route);
+
+  /* 뒤로가기를 휴대폰 앱처럼
+   * - 탭끼리(홈·일정·번개·기도제목·앨범·내 정보…) 옮길 땐 기록을 쌓지 않음 → 뒤로가기가 지나온 탭을 줄줄이 거치지 않게
+   * - 글·앨범·번개 안에서 뒤로가기 → 보던 탭으로
+   * - 홈이 아닌 탭에서 뒤로가기 → 홈으로
+   * - 홈에서 뒤로가기 → "한 번 더 누르면 앱이 닫혀요", 2초 안에 한 번 더 → 앱 닫힘 (휴대폰·설치한 앱에서만)
+   * 방법: 탭 화면 아래에 '바닥(root)' 기록 하나, 그 위에 '탭(guard)' 기록 하나를 두고, 탭을 바꿀 땐 guard 기록의 주소만 바꿈 */
+  const curHash = () => location.hash || '#/';
+  const depthOf = (h) => { const [n, ...rest] = h.replace(/^#\/?/, '').split('/'); return n === 'post' || rest.length ? 1 : 0; };
+  const isTopHome = (h) => h.replace(/^#\/?/, '') === '';
+  const exitGuard = () => isStandalone() || window.matchMedia('(pointer: coarse)').matches;
+  let topHash = depthOf(curHash()) === 0 ? curHash() : '#/';
+  let pendingTop = null;
+  let backTimer = 0;
+  function armHistory() {
+    // 지금 화면이 글이면: 바닥(홈 탭) → 탭 → 글 순서로 쌓아 둠
+    const cur = curHash();
+    history.replaceState({ yaRoot: 1 }, '', depthOf(cur) === 0 ? cur : topHash);
+    history.pushState({ yaTop: 1 }, '', depthOf(cur) === 0 ? cur : topHash);
+    if (depthOf(cur) === 1) history.pushState(null, '', cur);
+  }
+  if (auth.hash) armHistory();
+  // 탭으로 가는 링크는 기록을 새로 쌓지 않고 바꾸기만
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest('a[href^="#/"], a[href="#"]');
+    if (!a || e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || a.target === '_blank') return;
+    const to = a.getAttribute('href') === '#' ? '#/' : a.getAttribute('href');
+    if (depthOf(to) !== 0 || !auth.hash) return; // 글로 들어가는 건 평소처럼 (뒤로가기로 돌아오게)
+    e.preventDefault();
+    if (depthOf(curHash()) === 1) {
+      // 글 안에서 탭으로: 글 기록을 걷어 내고 탭 기록으로 돌아간 뒤 그 탭으로
+      pendingTop = to;
+      history.go(-1);
+      return;
+    }
+    if (to === curHash()) { route(); return; }
+    topHash = to;
+    // "한 번 더" 안내 직후라 바닥에 있으면 탭 기록을 다시 올리고, 아니면 탭 기록의 주소만 바꿈
+    if ((history.state || {}).yaRoot) { clearTimeout(backTimer); history.pushState({ yaTop: 1 }, '', to); } else history.replaceState({ yaTop: 1 }, '', to);
+    route();
+  }, true);
+  window.addEventListener('popstate', (e) => {
+    if (!auth.hash) return;
+    const st = e.state || {};
+    // 글을 여러 개 거쳐 왔는데 탭 링크를 눌렀으면 탭 기록이 나올 때까지 계속 뒤로
+    if (!st.yaTop && !st.yaRoot && pendingTop && depthOf(curHash()) === 1) { history.go(-1); return; }
+    if (st.yaTop) {
+      // 글에서 돌아옴 (또는 글 안에서 탭 링크를 눌러 돌아옴)
+      if (pendingTop && pendingTop !== curHash()) { history.replaceState({ yaTop: 1 }, '', pendingTop); topHash = pendingTop; pendingTop = null; route(); return; }
+      pendingTop = null;
+      topHash = curHash();
+      return;
+    }
+    if (st.yaRoot) {
+      // 탭 화면에서 뒤로가기를 누름
+      if (!isTopHome(topHash)) {
+        topHash = '#/';
+        history.replaceState({ yaRoot: 1 }, '', '#/');
+        history.pushState({ yaTop: 1 }, '', '#/');
+        route();
+        return;
+      }
+      if (curHash() !== '#/') { history.replaceState({ yaRoot: 1 }, '', '#/'); route(); }
+      if (!exitGuard()) { history.back(); return; } // 컴퓨터는 그냥 사이트 밖으로
+      // 홈에서: 한 번 더 누르면 닫힘 (이번엔 바닥에 남아 있고, 2초 지나면 다시 막아 둠)
+      toast('한 번 더 누르면 앱이 닫혀요');
+      clearTimeout(backTimer);
+      backTimer = setTimeout(() => { if ((history.state || {}).yaRoot) history.pushState({ yaTop: 1 }, '', curHash()); }, 2000);
+    }
+  });
   window.matchMedia('(min-width: 1180px)').addEventListener?.('change', renderPanel);
 
   // 인터넷 끊김 알림

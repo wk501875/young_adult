@@ -315,7 +315,7 @@
    * 화면 (UI)
    * ════════════════════════════════════════════════════════════ */
   const APP = C.appName || '일산교회 청년회';
-  const APP_VERSION = '11.09-d'; // 내 정보 맨 아래에 보임 (휴대폰이 새 버전을 받았는지 확인용)
+  const APP_VERSION = '11.09-e'; // 내 정보 맨 아래에 보임 (휴대폰이 새 버전을 받았는지 확인용)
   // 화면 밝기 (기본: 밝게)
   const darkMQ = window.matchMedia('(prefers-color-scheme: dark)');
   function applyTheme() {
@@ -1639,6 +1639,15 @@
   const isSamsung = () => /SamsungBrowser/i.test(navigator.userAgent);
   const isChrome = () => /Chrome\//.test(navigator.userAgent) && !/SamsungBrowser|Edg\/|OPR\/|Whale/i.test(navigator.userAgent);
   function permGuideHtml() {
+    // 갤럭시 삼성 인터넷은 앱을 먼저 설치하면 알림 허용 창이 안 뜸 → 앱을 지우고 브라우저에서 켠 뒤 다시 설치
+    if (isSamsung() && isStandalone()) {
+      return `<p class="sheet__text">갤럭시 삼성 인터넷은 <b>앱을 먼저 설치하면</b> 알림을 켤 수 없어요. 아래 순서로 한 번만 하면 돼요.</p>
+        <ol class="push-steps">
+          <li>홈 화면의 <b>일산교회 청년회</b> 아이콘을 길게 눌러 <b>삭제</b></li>
+          <li><b>삼성 인터넷</b>에서 <b>young-adult.pages.dev</b> 열기 → 뜨는 창에서 <b>알림 받고 앱으로 설치하기</b></li>
+          <li>알림 <b>허용</b> → 홈 화면에 앱 <b>다시 설치</b>까지 순서대로 진행돼요</li>
+        </ol>`;
+    }
     if (isSamsung()) {
       return `<p class="sheet__text">삼성 인터넷이 허용 창을 띄우지 않고 있어요. 아래처럼 한 번만 켜 주면 바로 이어서 알림이 켜져요.</p>
         <ol class="push-steps">
@@ -1792,14 +1801,64 @@
       }).result;
       return;
     }
+    // 휴대폰 브라우저로 처음 들어온 사람: 알림 켜기 → 앱 설치를 버튼 하나로 (갤럭시는 이 순서여야 알림이 됨)
+    const canInstall = !isStandalone() && window.matchMedia('(pointer: coarse)').matches;
     const yes = await openSheet({
-      title: '새 글 알림 받기',
-      body: '<p class="sheet__text">교제록·포토스토리·앨범·번개가 올라오면 휴대폰으로 알려 드려요. <b>알림 받기</b>를 누른 뒤 나오는 창에서 <b>허용</b>을 눌러 주세요.</p><p class="hint">내 정보에서 언제든 끌 수 있어요</p>',
-      actions: [{ label: '나중에', value: false }, { label: '알림 받기', value: true, kind: 'primary', icon: 'bell' }],
+      title: canInstall ? '알림 받고 앱으로 쓰기' : '새 글 알림 받기',
+      body: canInstall
+        ? '<p class="sheet__text">버튼 하나로 <b>새 글 알림</b>을 켜고, 휴대폰 홈 화면에 <b>앱</b>을 설치해요. 나오는 창에서 <b>허용</b> → <b>설치</b>만 누르면 돼요.</p><p class="hint">교제록·포토스토리·앨범·번개가 올라오면 알려 드려요 · 내 정보에서 언제든 끌 수 있어요</p>'
+        : '<p class="sheet__text">교제록·포토스토리·앨범·번개가 올라오면 휴대폰으로 알려 드려요. <b>알림 받기</b>를 누른 뒤 나오는 창에서 <b>허용</b>을 눌러 주세요.</p><p class="hint">내 정보에서 언제든 끌 수 있어요</p>',
+      actions: [{ label: '나중에', value: false }, { label: canInstall ? '알림 받고 앱 설치' : '알림 받기', value: true, kind: 'primary', icon: 'bell' }],
     }).result;
     if (!yes) { store.set('pushAskLater', Date.now() + 7 * 86400e3); return; }
-    await pushOn(); // 안 되면 pushOn이 이유를 알려 줌
+    const ok = await pushOn(); // 안 되면 pushOn이 이유를 알려 줌
     if (Notification.permission === 'denied') store.set('pushAskLater', Date.now() + 365 * 86400e3);
+    if (ok && canInstall) askInstall();
+  }
+
+  /* ─── 홈 화면에 앱 설치 ───
+   * 안드로이드(크롬·삼성 인터넷)는 설치 창을 바로 띄우고, 안 되는 브라우저는 메뉴 위치를 안내.
+   * 갤럭시는 알림을 먼저 켜고 설치해야 해서, 알림이 꺼져 있으면 알림부터 켬 */
+  let installEvt = null;
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; document.getElementById('installCard')?.removeAttribute('hidden'); });
+  window.addEventListener('appinstalled', () => { installEvt = null; toast('홈 화면에 앱을 설치했어요'); document.getElementById('installCard')?.setAttribute('hidden', ''); });
+  async function installApp() {
+    if (isStandalone()) return;
+    if (installEvt) {
+      installEvt.prompt();
+      await installEvt.userChoice.catch(() => null);
+      installEvt = null;
+      return;
+    }
+    const how = isIOS()
+      ? '<li>Safari 아래쪽 <b>공유 버튼</b>을 눌러요</li><li><b>‘홈 화면에 추가’</b>를 눌러요</li>'
+      : isSamsung()
+        ? '<li>아래쪽 <b>≡ 메뉴</b>를 눌러요</li><li><b>‘현재 페이지 추가’ → ‘홈 화면’</b>을 눌러요</li>'
+        : '<li>오른쪽 위 <b>⋮ 메뉴</b>를 눌러요</li><li><b>‘앱 설치’</b> 또는 <b>‘홈 화면에 추가’</b>를 눌러요</li>';
+    openSheet({
+      title: '홈 화면에 앱 설치',
+      body: `<p class="sheet__text">아래처럼 누르면 홈 화면에 <b>교회당 아이콘</b>이 생겨요.</p><ol class="push-steps">${how}</ol>`,
+      actions: [{ label: '알겠어요', value: true, kind: 'primary' }],
+    });
+  }
+  async function installWithPush() {
+    if (pushCapable() && Notification.permission !== 'granted' && !isInApp()) {
+      const ok = await pushOn();
+      if (!ok) return;
+      return askInstall();
+    }
+    installApp();
+  }
+  // 알림을 켠 뒤 설치는 한 번 더 눌러야 함 (브라우저는 사람이 누른 직후에만 설치 창을 띄워 줌)
+  async function askInstall() {
+    if (isStandalone()) return;
+    await new Promise((r) => setTimeout(r, 900)); // 시험 알림이 먼저 보이게
+    const go = await openSheet({
+      title: '알림을 켰어요. 이제 앱을 설치할까요?',
+      body: '<p class="sheet__text">홈 화면에 <b>교회당 아이콘</b>이 생기고, 앱처럼 바로 열 수 있어요.</p>',
+      actions: [{ label: '나중에', value: false }, { label: '앱 설치', value: true, kind: 'primary' }],
+    }).result;
+    if (go) installApp();
   }
   async function drawPushCard() {
     const $b = document.getElementById('pushBtn');
@@ -1865,6 +1924,10 @@
           ${[['light', '밝게'], ['dark', '어둡게'], ['system', '기기 설정']].map(([k, l]) => `<button type="button" data-t="${k}" aria-pressed="${store.get('theme', 'light') === k}">${l}</button>`).join('')}
         </div>
       </section>
+      <section class="card setting" id="installCard"${!isStandalone() && window.matchMedia('(pointer: coarse)').matches ? '' : ' hidden'}>
+        <span><b>앱으로 설치</b><small>홈 화면에 교회당 아이콘으로 설치해요 · 알림을 먼저 켜고 설치해요</small></span>
+        <button type="button" class="btn btn--sm" id="installBtn">설치하기</button>
+      </section>
       <section class="card setting" id="pushCard">
         <span><b>새 글 알림</b><small id="pushHint">교제록·포토스토리·앨범·번개가 올라오면 휴대폰으로 알려 드려요</small></span>
         <button type="button" class="btn btn--sm" id="pushBtn" disabled>확인 중</button>
@@ -1893,6 +1956,7 @@
       <p class="hint app-ver">앱 버전 ${APP_VERSION}</p>`;
 
     drawPushCard();
+    document.getElementById('installBtn').onclick = () => installWithPush();
     // 프로필 사진 바꾸기: 가운데를 정사각형으로 잘라 256px로 줄여서 앱에만 저장 (깨사모 사진은 그대로)
     const setMyPic = (pic, custom) => {
       const m = { ...auth.me, pic, hasCustomPic: custom };

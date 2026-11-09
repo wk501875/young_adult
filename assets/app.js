@@ -315,6 +315,7 @@
    * 화면 (UI)
    * ════════════════════════════════════════════════════════════ */
   const APP = C.appName || '일산교회 청년회';
+  const APP_VERSION = '11.09-c'; // 내 정보 맨 아래에 보임 (휴대폰이 새 버전을 받았는지 확인용)
   // 화면 밝기 (기본: 밝게)
   const darkMQ = window.matchMedia('(prefers-color-scheme: dark)');
   function applyTheme() {
@@ -1716,11 +1717,14 @@
       if (Notification.permission === 'granted') perm = 'granted';
       if (perm !== 'granted') { if (perm !== 'default' || !guide) pushFailed(perm === 'denied' ? 'denied' : 'perm'); else pushDiag('perm', 'no-answer'); return false; }
       // 허용된 뒤 등록 (처음 시도가 허용 전이라 실패했으면 한 번 더)
+      pushDiag('perm-ok', perm);
       let sub = await withTimeout(early, 20000, 'subscribe').catch(() => null);
       if (!sub) sub = await withTimeout(subscribeNow(), 20000, 'subscribe');
+      pushDiag('sub-ok', String(sub.endpoint || '').split('/')[2] || '');
       const r = await withTimeout(callApi('push_sub', { sub: sub.toJSON() }), 12000, 'net');
       if (r.status !== 'ok') { pushFailed('net', errText(r)); return false; }
       store.set('pushSubV', 2);
+      pushDiag('ok', 'saved');
       toast('알림을 켰어요. 지금 시험 알림을 하나 보내 드려요');
       testPush();
       return true;
@@ -1825,7 +1829,7 @@
     $b.textContent = st === 'on' ? '알림 끄기' : '알림 받기';
     $b.onclick = async () => {
       $b.disabled = true; $b.textContent = '잠시만요';
-      pushDiag('click', `${st} perm=${Notification.permission}`);
+      pushDiag('click', `v${APP_VERSION} ${st} perm=${Notification.permission}`);
       try { if (st === 'on') await pushOff(); else await pushOn(); } catch { /* 안내는 pushOn이 띄움 */ }
       drawPushCard();
     };
@@ -1891,7 +1895,8 @@
           <div class="btn-row"><button class="btn btn--primary btn--sm" type="button" id="run">호출하기</button><button class="btn btn--sm" type="button" id="reload">교제록 다시 불러오기</button></div>
           <pre class="json" id="out" hidden></pre>
         </div>
-      </details>` : ''}`;
+      </details>` : ''}
+      <p class="hint app-ver">앱 버전 ${APP_VERSION}</p>`;
 
     drawPushCard();
     // 프로필 사진 바꾸기: 가운데를 정사각형으로 잘라 256px로 줄여서 앱에만 저장 (깨사모 사진은 그대로)
@@ -3268,7 +3273,7 @@
   // 새 버전 자동 적용: 휴대폰에 설치한 앱은 켜 둔 채로 두면 새 버전이 올라와도 그대로라서,
   // 앱 화면으로 돌아올 때(5분에 한 번까지) app.js가 바뀌었는지 보고, 바뀌었으면 쓰던 글이 없을 때 새로고침
   let appTag = '';
-  let lastCheck = Date.now();
+  let lastCheck = 0; // 앱을 다시 열면 바로 한 번 확인
   const appVersion = () => fetch('/assets/app.js', { method: 'HEAD', cache: 'no-store' })
     .then((r) => r.headers.get('ETag') || r.headers.get('Last-Modified') || '').catch(() => '');
   appVersion().then((t) => { appTag = t; });

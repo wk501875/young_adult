@@ -1677,7 +1677,19 @@
     try {
       // 허용 요청과 알림 등록을 동시에 시작함. 삼성 인터넷(특히 설치한 앱)은 허용 요청엔 대답이 없다가
       // 등록을 시도할 때 허용 창을 띄우기도 하고, 크롬은 허용 창을 작게만 띄우기도 함
-      const permP = Promise.resolve(Notification.requestPermission()).catch(() => Notification.permission);
+      // 허용 요청: 새 방식(Promise)과 옛 방식(콜백) 둘 다로 대답을 기다림.
+      // 갤럭시 삼성 인터넷은 옛 방식으로만 대답하고 새 방식은 끝까지 대답이 없어서, 앱이 '잠시만요'에 멈췄었음.
+      // 그래도 대답이 없을 때를 대비해 권한 값이 바뀌는지도 0.5초마다 확인
+      const permP = new Promise((ok) => {
+        let done = false;
+        const fin = (res) => { if (!done) { done = true; clearInterval(poll); ok(res || Notification.permission); } };
+        const poll = setInterval(() => { if (Notification.permission !== 'default') fin(Notification.permission); }, 500);
+        setTimeout(() => clearInterval(poll), 130000);
+        try {
+          const p = Notification.requestPermission(fin);
+          if (p && typeof p.then === 'function') p.then(fin, () => fin(Notification.permission));
+        } catch { fin(Notification.permission); }
+      });
       const keyP = withTimeout(callApi('push_key'), 12000, 'net');
       const subscribeNow = async () => {
         const k = await keyP;

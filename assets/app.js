@@ -2900,7 +2900,7 @@
     if (readPos && !readPick) return viewChapter(readPos.b, readPos.c);
     const bookBtn = (b) => {
       const n = CHAPS[b], done = [...Array(n)].filter((_, c) => isChapRead(b, c + 1)).length;
-      return `<button type="button" class="bbook${done === n ? ' is-done' : done ? ' is-some' : ''}" data-book="${b}"><b>${esc(BOOKS[b][0])}</b><small>${done ? `${done}/${n}장` : `${n}장`}</small></button>`;
+      return `<button type="button" class="bbook${done === n ? ' is-done' : done ? ' is-some' : ''}" data-book="${b}"><b>${esc(BOOKS[b][0])}</b><small>${done ? `${done}/${n}` : n}${b === 19 ? '편' : '장'}</small></button>`;
     };
     if (readPick) {
       const b = readPick, n = CHAPS[b];
@@ -2970,10 +2970,8 @@
     const today = new Date(), y = today.getFullYear();
     if (rdYear !== y) { rdYear = y; rdMarks = String(store.get(`rd:${y}`, '')).padEnd(1460, '0'); }
     const draw = () => {
-      const todayDay = planDay(today);
       const total = (rdMarks.match(/1/g) || []).length;
       const fullDays = [...Array(365)].filter((_, d) => rdMarks.slice(d * 4, d * 4 + 4) === '1111').length;
-      const behind = [...Array(todayDay + 1)].filter((_, d) => rdMarks.slice(d * 4, d * 4 + 4) !== '1111').length;
       const chapRead = (rfMarks.match(/1/g) || []).length;
       const months = [...Array(12)].map((_, m) => {
         const first = new Date(y, m, 1), days = new Date(y, m + 1, 0).getDate();
@@ -2990,7 +2988,7 @@
         <section class="card bstats">
           <div class="bstat"><b>${streakDays(today)}일</b><small>연속으로 다 읽음</small></div>
           <div class="bstat"><b>${fullDays}일</b><small>네 곳을 다 읽은 날</small></div>
-          <div class="bstat"><b>${behind}일</b><small>오늘까지 못 채운 날</small></div>
+          <div class="bstat"><b>${chapRead}장</b><small>자유롭게 읽은 장</small></div>
         </section>
         <section class="card bheat">
           <div class="bheat__head"><h2>${y}년 맥체인 읽기표</h2><small>${total} / 1460곳 · ${Math.round((total / 1460) * 100)}%</small></div>

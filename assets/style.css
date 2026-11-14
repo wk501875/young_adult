@@ -1215,3 +1215,91 @@ body.no-panel .main > * { max-width: 1040px; }
 .tpl-save .input { flex: 1; min-width: 0; }
 .page-head #tplBtn { margin-left: 8px; }
 .app-ver { text-align: center; margin: 18px 0 0; font-size: 12px; }
+
+/* ═══ 성경읽기 (맥체인) ═══ */
+.bmem { padding: 18px 20px; margin-bottom: 14px; }
+.bmem__top { display: flex; align-items: center; gap: 8px; }
+.bmem__top small { color: var(--text-3); font-size: 13px; }
+.bmem__text { margin: 10px 0 12px; font-size: 16.5px; line-height: 1.75; color: var(--text); word-break: keep-all; }
+.bmem__foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.bmem__foot b { font-size: 14px; color: var(--brand); }
+.bmem__foot .btn .ic { width: 16px; height: 16px; }
+.bday { padding: 16px 18px 18px; margin-bottom: 14px; }
+.bday__nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.bday__title { display: grid; justify-items: center; line-height: 1.35; }
+.bday__title b { font-size: 18px; }
+.bday__title small { font-size: 13px; color: var(--text-3); }
+.bday__prog { display: flex; align-items: center; gap: 12px; margin: 14px 2px 12px; font-size: 13.5px; color: var(--text-2); font-weight: 600; }
+.bday__prog span:first-child { flex: none; }
+.bbar { flex: 1; height: 8px; border-radius: 99px; background: var(--surface-3); overflow: hidden; }
+.bbar i { display: block; height: 100%; width: 0; border-radius: 99px; background: var(--lime); transition: width .3s var(--ease); }
+.breads { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.bread { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); overflow: hidden; }
+.bread__row { display: flex; align-items: stretch; }
+.bread__check { flex: none; display: grid; place-items: center; width: 56px; border: 0; border-right: 1px solid var(--line); background: none; color: transparent; cursor: pointer; }
+.bread__check .ic { width: 22px; height: 22px; padding: 3px; border: 2px solid var(--line-2); border-radius: 8px; box-sizing: content-box; stroke-width: 3; transition: background-color .15s, border-color .15s, color .15s; }
+.bread.is-done .bread__check .ic { background: var(--lime); border-color: var(--lime); color: var(--lime-ink); }
+.bread__head { flex: 1; display: grid; grid-template-columns: 1fr auto; align-items: center; column-gap: 8px; padding: 12px 14px; border: 0; background: none; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.bread__head b { grid-column: 1; font-size: 16px; }
+.bread__ic { grid-column: 2; width: 18px; height: 18px; color: var(--text-3); transition: transform .2s var(--ease); }
+.bread.is-open .bread__ic { transform: rotate(90deg); }
+.bread.is-done .bread__head b { color: var(--text-3); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--text-3) 50%, transparent); }
+.bread__body { padding: 4px 18px 16px; border-top: 1px solid var(--line); }
+.btext h4 { margin: 16px 0 6px; font-size: 15px; color: var(--brand); }
+.btext p { margin: 0 0 6px; font-size: 16.5px; line-height: 1.85; word-break: keep-all; }
+.btext sup { margin-right: 5px; font-size: 11px; font-weight: 700; color: var(--text-3); vertical-align: 4px; }
+.bread__done { width: 100%; margin-top: 12px; justify-content: center; }
+.bday__back { display: flex; justify-content: center; margin-top: 12px; }
+.bstats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; padding: 16px; }
+.bstat { display: grid; justify-items: center; text-align: center; gap: 2px; }
+.bstat b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.bstat small { font-size: 12px; color: var(--text-3); line-height: 1.4; word-break: keep-all; }
+.bread__done.is-read { background: color-mix(in srgb, var(--lime) 30%, var(--surface)); border-color: var(--lime); color: var(--lime-ink); }
+.bstats { margin-bottom: 14px; }
+
+/* 성경 읽기 (자유롭게) */
+.bpick { padding: 16px 18px 18px; margin-bottom: 14px; }
+.bpick__h { margin: 0 0 12px; font-size: 16px; font-weight: 600; }
+.bpick__top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.bpick__top .back { margin: 0; }
+.bpick__top b { font-size: 17px; }
+.bbooks { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.bbook { display: grid; gap: 2px; padding: 10px 8px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); text-align: center; font: inherit; color: var(--text); cursor: pointer; transition: border-color .15s, background-color .15s; }
+.bbook:hover { border-color: var(--line-2); }
+.bbook b { font-size: 14.5px; font-weight: 600; word-break: keep-all; }
+.bbook small { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.bbook.is-some { border-color: color-mix(in srgb, var(--lime) 70%, transparent); }
+.bbook.is-done { background: color-mix(in srgb, var(--lime) 30%, var(--surface)); border-color: var(--lime); }
+.bbook.is-done small, .bbook.is-some small { color: var(--lime-ink); }
+.bchaps { display: grid; grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); gap: 6px; }
+.bchap { height: 44px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); font: 600 15px/1 var(--font); color: var(--text-2); font-variant-numeric: tabular-nums; cursor: pointer; }
+.bchap:hover { border-color: var(--line-2); color: var(--text); }
+.bchap.is-done { background: var(--lime); border-color: var(--lime); color: var(--lime-ink); }
+.bchapter { padding: 16px 18px 18px; }
+.bchapter__nav { display: flex; justify-content: space-between; gap: 8px; margin-top: 12px; }
+.bchapter__nav .btn .ic { width: 16px; height: 16px; }
+
+/* 내 현황 */
+.bheat { padding: 16px 18px 18px; margin-bottom: 14px; }
+.bheat__head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.bheat__head h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.bheat__head small { font-size: 13px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.hlegend { display: flex; align-items: center; gap: 4px; margin-bottom: 12px; }
+.hlegend small { font-size: 12px; color: var(--text-3); margin: 0 4px; }
+.hlegend .hcell { width: 12px; height: 12px; }
+.hmonths { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 14px 16px; margin-bottom: 12px; }
+.hmonth b { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 600; color: var(--text-2); }
+.hgrid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.hgrid > span { aspect-ratio: 1; }
+.hcell { display: block; aspect-ratio: 1; padding: 0; border: 0; border-radius: 3px; background: var(--surface-3); cursor: pointer; }
+.hcell.l1 { background: color-mix(in srgb, var(--lime) 30%, var(--surface-3)); }
+.hcell.l2 { background: color-mix(in srgb, var(--lime) 55%, var(--surface-3)); }
+.hcell.l3 { background: color-mix(in srgb, var(--lime) 78%, var(--surface-3)); }
+.hcell.l4 { background: var(--lime); }
+.hcell.is-fut { opacity: .45; }
+.hcell.is-today { box-shadow: 0 0 0 1.5px var(--brand); }
+.bprog { display: grid; gap: 2px; }
+.bprog__row { display: grid; grid-template-columns: 84px 1fr 56px; align-items: center; gap: 10px; padding: 6px 4px; border: 0; border-radius: 8px; background: none; font: inherit; color: var(--text); text-align: left; cursor: pointer; }
+.bprog__row:hover { background: var(--surface-2); }
+.bprog__row > span:first-child { font-size: 14px; word-break: keep-all; }
+.bprog__row small { font-size: 12px; color: var(--text-3); text-align: right; font-variant-numeric: tabular-nums; }

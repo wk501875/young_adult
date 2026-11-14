@@ -24,6 +24,8 @@ const APIS = {
   board_upload:  { path: '/in/boardb_upload_json.php', needHash: true },  // multipart 전용
   comment:       { path: '/in/boardb_pro_json.php', needHash: true },    // 댓글 달기·지우기 (mode)
   schedule:      { path: '/ex/church_schedule.php' },                   // 교회 일정 (청년회 부서)
+  bible:         { path: '/in/load_bible.php' },                     // 토브성경 본문 조회·검색 (bCode·eCode·langCode)
+  memory:        { path: '/ex/bible_memory.php' },                   // 우리 교회 이번 주 암송 구절 (chId)
 };
 
 const json = (o) =>
@@ -141,6 +143,50 @@ async function avatars(env, api, p, raw) {
       out[x] = (await env.CAL.get(`avatar:${x}`)) || (await env.CAL.get(`pic:${x}`)) || '';
     }));
     return { status: 'ok', result: out };
+  }
+  return { status: 'error', result: `허용되지 않은 API: ${api}` };
+}
+
+/* ═══ 성경읽기 (맥체인) 체크 ══════════════════════
+ * rd:아이디:연도  = 365일 × 4곳을 '0'/'1' 1460글자로 (어느 기기에서든 같은 체크)
+ * rdc:날짜:아이디 = 그날 네 곳을 다 읽은 사람 (몇 명이 읽었는지만 셈, 3일 뒤 자동 삭제) */
+async function reading(env, api, p, raw) {
+  const kv = needKV(env);
+  if (kv) return kv;
+  const who = await whoAmI(env, p.hash);
+  if (who.error) return who.error;
+  // 자유롭게 읽기: 성경 1189장마다 읽음 '0'/'1' (rf:아이디, 연도와 상관없이 쌓임)
+  if (api === 'rf_get' || api === 'rf_set') {
+    const fkey = `rf:${who.u.userid}`;
+    let fm = ((await env.CAL.get(fkey)) || '').padEnd(1189, '0').slice(0, 1189);
+    if (api === 'rf_set') {
+      const i = Number(raw.idx);
+      if (!Number.isInteger(i) || i < 0 || i > 1188) return { status: 'error', result: '장을 확인해 주세요' };
+      fm = fm.slice(0, i) + (raw.on ? '1' : '0') + fm.slice(i + 1);
+      await env.CAL.put(fkey, fm);
+    }
+    return { status: 'ok', result: fm };
+  }
+  const year = String(raw.year || '');
+  if (!/^20\d\d$/.test(year)) return { status: 'error', result: '연도를 확인해 주세요' };
+  const key = `rd:${who.u.userid}:${year}`;
+  let marks = (await env.CAL.get(key)) || '';
+  marks = marks.padEnd(1460, '0').slice(0, 1460);
+  const countToday = async (date) => (/^\d{4}-\d\d-\d\d$/.test(date) ? (await env.CAL.list({ prefix: `rdc:${date}:` })).keys.length : 0);
+  if (api === 'rd_get') return { status: 'ok', result: marks, doneToday: await countToday(String(raw.date || '')) };
+  if (api === 'rd_set') {
+    const day = Number(raw.day), idx = Number(raw.idx);
+    if (!Number.isInteger(day) || day < 0 || day > 364 || !Number.isInteger(idx) || idx < 0 || idx > 3) return { status: 'error', result: '읽기 칸을 확인해 주세요' };
+    const i = day * 4 + idx;
+    marks = marks.slice(0, i) + (raw.on ? '1' : '0') + marks.slice(i + 1);
+    await env.CAL.put(key, marks);
+    const date = String(raw.date || '');
+    if (/^\d{4}-\d\d-\d\d$/.test(date)) {
+      const all = marks.slice(day * 4, day * 4 + 4) === '1111';
+      const ck = `rdc:${date}:${who.u.userid}`;
+      if (all) await env.CAL.put(ck, '1', { expirationTtl: 3 * 86400 }); else await env.CAL.delete(ck);
+    }
+    return { status: 'ok', result: marks, doneToday: await countToday(date) };
   }
   return { status: 'error', result: `허용되지 않은 API: ${api}` };
 }
@@ -778,6 +824,7 @@ export async function onRequestPost({ request, env }) {
   if (/^push_/.test(api)) return json(await push(env, api, clean, params || {}));
   if (/^avatar_/.test(api)) return json(await avatars(env, api, clean, params || {}));
   if (/^tpl_/.test(api)) return json(await templates(env, api, clean, params || {}));
+  if (/^r[df]_/.test(api)) return json(await reading(env, api, clean, params || {}));
   if (/^bg_/.test(api)) {
     if (!clean.hash) return json({ status: 'error', result: 'hash가 필요합니다' });
     return json(await meetup(env, api, clean, params || {}));

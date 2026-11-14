@@ -147,6 +147,38 @@ async function avatars(env, api, p, raw) {
   return { status: 'error', result: `허용되지 않은 API: ${api}` };
 }
 
+/* ═══ 성경읽기 (맥체인) 체크 ══════════════════════
+ * rd:아이디:연도  = 365일 × 4곳을 '0'/'1' 1460글자로 (어느 기기에서든 같은 체크)
+ * rdc:날짜:아이디 = 그날 네 곳을 다 읽은 사람 (몇 명이 읽었는지만 셈, 3일 뒤 자동 삭제) */
+async function reading(env, api, p, raw) {
+  const kv = needKV(env);
+  if (kv) return kv;
+  const who = await whoAmI(env, p.hash);
+  if (who.error) return who.error;
+  const year = String(raw.year || '');
+  if (!/^20\d\d$/.test(year)) return { status: 'error', result: '연도를 확인해 주세요' };
+  const key = `rd:${who.u.userid}:${year}`;
+  let marks = (await env.CAL.get(key)) || '';
+  marks = marks.padEnd(1460, '0').slice(0, 1460);
+  const countToday = async (date) => (/^\d{4}-\d\d-\d\d$/.test(date) ? (await env.CAL.list({ prefix: `rdc:${date}:` })).keys.length : 0);
+  if (api === 'rd_get') return { status: 'ok', result: marks, doneToday: await countToday(String(raw.date || '')) };
+  if (api === 'rd_set') {
+    const day = Number(raw.day), idx = Number(raw.idx);
+    if (!Number.isInteger(day) || day < 0 || day > 364 || !Number.isInteger(idx) || idx < 0 || idx > 3) return { status: 'error', result: '읽기 칸을 확인해 주세요' };
+    const i = day * 4 + idx;
+    marks = marks.slice(0, i) + (raw.on ? '1' : '0') + marks.slice(i + 1);
+    await env.CAL.put(key, marks);
+    const date = String(raw.date || '');
+    if (/^\d{4}-\d\d-\d\d$/.test(date)) {
+      const all = marks.slice(day * 4, day * 4 + 4) === '1111';
+      const ck = `rdc:${date}:${who.u.userid}`;
+      if (all) await env.CAL.put(ck, '1', { expirationTtl: 3 * 86400 }); else await env.CAL.delete(ck);
+    }
+    return { status: 'ok', result: marks, doneToday: await countToday(date) };
+  }
+  return { status: 'error', result: `허용되지 않은 API: ${api}` };
+}
+
 /* ═══ 교제록 템플릿 ══════════════════════════════
  * 자주 쓰는 양식(참석자·말씀·나눔·기도제목·기타)을 이름 붙여 저장 → 어느 기기에서든 불러오기. 한 사람에 10개까지 */
 async function templates(env, api, p, raw) {
@@ -780,6 +812,7 @@ export async function onRequestPost({ request, env }) {
   if (/^push_/.test(api)) return json(await push(env, api, clean, params || {}));
   if (/^avatar_/.test(api)) return json(await avatars(env, api, clean, params || {}));
   if (/^tpl_/.test(api)) return json(await templates(env, api, clean, params || {}));
+  if (/^rd_/.test(api)) return json(await reading(env, api, clean, params || {}));
   if (/^bg_/.test(api)) {
     if (!clean.hash) return json({ status: 'error', result: 'hash가 필요합니다' });
     return json(await meetup(env, api, clean, params || {}));

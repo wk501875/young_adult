@@ -1246,7 +1246,7 @@ body.no-panel .main > * { max-width: 1040px; }
 .bread.is-done .bread__head b { color: var(--text-3); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--text-3) 50%, transparent); }
 .bread__body { padding: 4px 18px 16px; border-top: 1px solid var(--line); }
 .btext h4 { margin: 16px 0 6px; font-size: 15px; color: var(--brand); }
-.btext p { margin: 0 0 6px; font-size: 16.5px; line-height: 1.85; word-break: keep-all; }
+.btext p { margin: 0 0 6px; font-size: var(--bfs, 16.5px); line-height: 1.85; word-break: keep-all; }
 .btext sup { margin-right: 5px; font-size: 11px; font-weight: 700; color: var(--text-3); vertical-align: 4px; }
 .bread__done { width: 100%; margin-top: 12px; justify-content: center; }
 .bday__back { display: flex; justify-content: center; margin-top: 12px; }
@@ -1303,3 +1303,44 @@ body.no-panel .main > * { max-width: 1040px; }
 .bprog__row:hover { background: var(--surface-2); }
 .bprog__row > span:first-child { font-size: 14px; word-break: keep-all; }
 .bprog__row small { font-size: 12px; color: var(--text-3); text-align: right; font-variant-numeric: tabular-nums; }
+
+/* 성경읽기: 글자 크기 · 읽기 설정 · 시작일 고르기 */
+.bfs { display: inline-flex; flex: none; border: 1px solid var(--line-2); border-radius: 10px; overflow: hidden; }
+.bfs button { width: 38px; height: 34px; border: 0; background: var(--surface); color: var(--text-2); font: 600 13px/1 var(--font); cursor: pointer; }
+.bfs button + button { border-left: 1px solid var(--line-2); font-size: 17px; }
+.bfs button:disabled { color: var(--text-3); opacity: .45; cursor: default; }
+.bday__prog .bfs { margin-left: 4px; }
+.bday__back { flex-wrap: wrap; gap: 4px 16px; }
+.bday__back:empty { display: none; }
+.bset { padding: 6px 18px; margin-bottom: 14px; }
+.bset__row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; }
+.bset__row + .bset__row { border-top: 1px solid var(--line); }
+.bset__row > span, .bset__row > label { display: grid; gap: 2px; min-width: 0; }
+.bset__row b { font-size: 15px; font-weight: 600; }
+.bset__row small { font-size: 12.5px; color: var(--text-3); word-break: keep-all; }
+.radios { display: grid; gap: 8px; margin-bottom: 12px; }
+.radio { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; cursor: pointer; }
+.radio:has(input:checked) { border-color: var(--brand); background: color-mix(in srgb, var(--brand) 6%, var(--surface)); }
+.radio > input { margin-top: 3px; accent-color: var(--brand); }
+.radio > span { display: grid; gap: 4px; flex: 1; min-width: 0; }
+.radio b { font-size: 15px; font-weight: 600; }
+.radio small { font-size: 13px; color: var(--text-3); }
+.input--sm { min-height: 38px; padding: 0 10px; font-size: 15px; }
+
+/* 성경 읽기: 장 제목(누르면 장 고르기) */
+.bchapter__title { display: inline-flex; align-items: center; gap: 4px; margin: 0 0 10px; padding: 4px 8px 4px 0; border: 0; background: none; font: inherit; color: var(--text); cursor: pointer; }
+.bchapter__title b { font-size: 19px; font-weight: 600; }
+.bchapter__ic { width: 16px; height: 16px; color: var(--text-3); transform: rotate(90deg); }
+
+/* 내 현황: 읽기표 넘기기 · 구약/신약 접기 */
+.bheat__nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.bheat__title { display: grid; justify-items: center; text-align: center; line-height: 1.35; }
+.bheat__title b { font-size: 16px; font-weight: 600; }
+.bheat__title small { font-size: 13px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.bgroup { border-top: 1px solid var(--line); }
+.bgroup summary { display: grid; grid-template-columns: 84px 1fr 64px 18px; align-items: center; gap: 10px; padding: 12px 4px; list-style: none; cursor: pointer; font-weight: 600; font-size: 15px; }
+.bgroup summary::-webkit-details-marker { display: none; }
+.bgroup summary small { font-size: 12px; color: var(--text-3); text-align: right; font-weight: 500; font-variant-numeric: tabular-nums; }
+.bgroup__ic { width: 16px; height: 16px; color: var(--text-3); transition: transform .2s var(--ease); }
+.bgroup[open] .bgroup__ic { transform: rotate(90deg); }
+.bgroup .bprog { padding-bottom: 10px; }

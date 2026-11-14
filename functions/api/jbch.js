@@ -157,6 +157,15 @@ function readMarks(v, len) {
   o.m = o.m.padEnd(len, '0').slice(0, len);
   return o;
 }
+const RD_KEY = /^(20\d\d|s20\d{6}c\d{1,2})$/;
+// 그 날짜가 어느 읽기표의 몇째 날인지 (시작일이 없으면 그해 1월 1일부터)
+function planOfDate(date, start) {
+  if (!start) return { key: date.slice(0, 4), day: planDayOf(date) };
+  const utc = (s) => { const [y, m, d] = s.split('-').map(Number); return Date.UTC(y, m - 1, d); };
+  const n = Math.round((utc(date) - utc(start)) / 86400e3);
+  if (n < 0) return null;
+  return { key: `s${start.replace(/-/g, '')}c${Math.floor(n / 365)}`, day: n % 365 };
+}
 // 맥체인 몇째 날인지 (앱의 planDay 와 같게: 1월 1일 = 0, 윤년 2월 29일은 28일과 같게)
 function planDayOf(date) {
   const [y, mo, d] = date.split('-').map(Number);
@@ -185,11 +194,26 @@ async function reading(env, api, p, raw) {
   const r = await readerId(env, p.hash);
   if (r.error) return r.error;
   const who = { u: { userid: r.id } };
+  // 읽기 설정: 내 시작일(없으면 1월 1일부터) · 매일 알림 시각(한국 시각 6~23시, 없으면 끔)
+  if (api === 'rd_cfg' || api === 'rd_cfg_set') {
+    const ckey = `rcfg:${who.u.userid}`;
+    const cur = (await env.CAL.get(ckey, 'json')) || { start: '', remind: '' };
+    if (api === 'rd_cfg') return { status: 'ok', result: cur };
+    const start = String(raw.start ?? cur.start ?? '');
+    const remind = String(raw.remind ?? cur.remind ?? '');
+    if (start && (!/^20\d\d-\d\d-\d\d$/.test(start) || isNaN(Date.parse(start)))) return { status: 'error', result: '시작일을 확인해 주세요' };
+    if (remind && !(/^\d{1,2}$/.test(remind) && Number(remind) >= 6 && Number(remind) <= 23)) return { status: 'error', result: '알림 시각을 확인해 주세요' };
+    if (cur.remind) await env.CAL.delete(`rrem:${cur.remind}:${who.u.userid}`);
+    if (remind) await env.CAL.put(`rrem:${remind}:${who.u.userid}`, '1', { metadata: { start } });
+    const next = { start, remind };
+    await env.CAL.put(ckey, JSON.stringify(next));
+    return { status: 'ok', result: next };
+  }
   // 새 방식: 앱이 읽기표를 통째로 보냄(빠르게 여러 번 눌러도 마지막 상태 그대로). 더 늦게 고친 것만 받음
   if (api === 'rf_put' || api === 'rd_put') {
     const isRf = api === 'rf_put', len = isRf ? 1189 : 1460;
-    const year = String(raw.year || '');
-    if (!isRf && !/^20\d\d$/.test(year)) return { status: 'error', result: '연도를 확인해 주세요' };
+    const year = String(raw.year || ''); // 1월 1일부터면 '2026', 내 시작일이면 's20261114c0'(시작일·몇 번째 1년)
+    if (!isRf && !RD_KEY.test(year)) return { status: 'error', result: '연도를 확인해 주세요' };
     const m = String(raw.marks || ''), t = Number(raw.t) || Date.now();
     if (!new RegExp(`^[01]{${len}}$`).test(m)) return { status: 'error', result: '읽기 기록을 확인해 주세요' };
     const key = isRf ? `rf:${who.u.userid}` : `rd:${who.u.userid}:${year}`;
@@ -197,8 +221,9 @@ async function reading(env, api, p, raw) {
     if (t >= cur.t) await env.CAL.put(key, JSON.stringify({ m, t }));
     let doneToday;
     const date = String(raw.date || '');
-    if (!isRf && /^\d{4}-\d\d-\d\d$/.test(date) && date.startsWith(year)) {
-      const day = planDayOf(date), ck = `rdc:${date}:${who.u.userid}`;
+    const td = Number(raw.todayDay); // 오늘이 이 읽기표의 몇째 날인지 (앱이 알려 줌, 이 표가 오늘 것이 아니면 -1)
+    if (!isRf && /^\d{4}-\d\d-\d\d$/.test(date) && Number.isInteger(td) && td >= 0 && td <= 364) {
+      const day = td, ck = `rdc:${date}:${who.u.userid}`;
       if (m.slice(day * 4, day * 4 + 4) === '1111') await env.CAL.put(ck, '1', { expirationTtl: 3 * 86400 }); else await env.CAL.delete(ck);
       doneToday = (await env.CAL.list({ prefix: `rdc:${date}:` })).keys.length;
     }
@@ -219,7 +244,7 @@ async function reading(env, api, p, raw) {
     return { status: 'ok', result: fm, t: fo.t };
   }
   const year = String(raw.year || '');
-  if (!/^20\d\d$/.test(year)) return { status: 'error', result: '연도를 확인해 주세요' };
+  if (!RD_KEY.test(year)) return { status: 'error', result: '연도를 확인해 주세요' };
   const key = `rd:${who.u.userid}:${year}`;
   const mo = readMarks(await env.CAL.get(key), 1460);
   let marks = mo.m;
@@ -789,9 +814,52 @@ async function notifyMeetup(env, b, m) {
   const jobKey = `pjob:bg:${m.id}`;
   return pushSendChunk(env, jobKey, { cursor: '', at, board: b, skip: m.by?.userid });
 }
+// 매일 성경읽기 알림: 정한 시각(한국 시각)에 오늘 맥체인을 다 못 읽은 사람에게만. 한 번에 15명씩, 하루 한 번
+async function remindRun(env) {
+  const kst = new Date(Date.now() + 9 * 3600e3);
+  const hour = kst.getUTCHours(), date = kst.toISOString().slice(0, 10);
+  const { keys } = await env.CAL.list({ prefix: `rrem:${hour}:` });
+  const todo = [];
+  for (const k of keys) {
+    const uid = k.name.slice(`rrem:${hour}:`.length);
+    if (await env.CAL.get(`rrs:${date}:${uid}`)) continue;
+    todo.push({ uid, start: k.metadata?.start || '' });
+    if (todo.length >= 15) break;
+  }
+  if (!todo.length) return { reminded: 0 };
+  const subs = [];
+  let cursor = '';
+  do {
+    const pg = await env.CAL.list({ prefix: 'psub:', ...(cursor ? { cursor } : {}) });
+    subs.push(...pg.keys);
+    cursor = pg.list_complete ? '' : pg.cursor;
+  } while (cursor);
+  const vk = await vapidKeys(env);
+  let sent = 0;
+  for (const t of todo) {
+    await env.CAL.put(`rrs:${date}:${t.uid}`, '1', { expirationTtl: 2 * 86400 });
+    const pl = planOfDate(date, t.start);
+    if (!pl) continue;
+    const m = readMarks(await env.CAL.get(`rd:${t.uid}:${pl.key}`), 1460).m.slice(pl.day * 4, pl.day * 4 + 4);
+    const left = 4 - (m.match(/1/g) || []).length;
+    if (!left) continue;
+    const mine = subs.filter((s) => s.metadata?.userid === t.uid && s.metadata?.endpoint);
+    if (!mine.length) continue;
+    await env.CAL.put(`push:latest:u:${t.uid}`, JSON.stringify({ title: '오늘 성경읽기', body: left === 4 ? '오늘 맥체인 네 곳을 읽어 볼까요?' : `오늘 맥체인 ${left}곳이 남았어요`, url: '/#/bible', at: Date.now() }), { expirationTtl: 86400 });
+    for (const s of mine) {
+      try {
+        const res = await fetch(s.metadata.endpoint, { method: 'POST', headers: { TTL: '3600', Urgency: 'normal', Authorization: await vapidAuth(s.metadata.endpoint, vk), 'Content-Length': '0' } });
+        if (res.status === 404 || res.status === 410) await env.CAL.delete(s.name); else if (res.ok) sent++;
+      } catch { /* 한 기기 실패는 넘어감 */ }
+    }
+  }
+  return { reminded: sent };
+}
 async function pushRun(env) {
   const pending = await pushNextJob(env);
   if (pending) return { status: 'ok', result: pending };
+  const rem = await remindRun(env).catch(() => ({ reminded: 0 }));
+  if (rem.reminded) return { status: 'ok', result: { ...rem, more: true } }; // 새 글 확인은 다음 호출에서 (바깥 요청 수 한도 때문)
   const now = Date.now();
   const last = Number(await env.CAL.get('push:lastRun')) || 0;
   if (now - last < PUSH_GAP - 60e3) return { status: 'ok', result: { skip: true, nextInMin: Math.ceil((last + PUSH_GAP - now) / 60e3) } };
@@ -819,13 +887,15 @@ async function push(env, api, p, raw) {
     // 알림 문구: 새 글 소식과, 이 기기 주인 쪽(형제/자매) 번개 소식 중 더 최근 것
     const news = await env.CAL.get('push:latest', 'json');
     const endpoint = String(raw.endpoint || '');
-    let bg = null;
+    let bg = null, mine = null;
     if (/^https:\/\//.test(endpoint)) {
       const got = await env.CAL.getWithMetadata(`psub:${await subId(endpoint)}`);
       const board = got?.metadata?.board;
       if (board) bg = await env.CAL.get(`push:latest:bg:${board}`, 'json');
+      if (got?.metadata?.userid) mine = await env.CAL.get(`push:latest:u:${got.metadata.userid}`, 'json'); // 매일 성경읽기 알림
     }
-    return { status: 'ok', result: (bg && (!news || bg.at > news.at)) ? bg : news };
+    const pick = [news, bg, mine].filter(Boolean).sort((a, b) => (b.at || 0) - (a.at || 0))[0] || null;
+    return { status: 'ok', result: pick };
   }
   if (api === 'push_run') return pushRun(env);
   // 알림 켜기 실패 기록 (로그인한 회원만 남길 수 있고, 최고 관리자만 볼 수 있음. 최근 50개만, 30일 뒤 자동 삭제)

@@ -3201,12 +3201,14 @@
       document.getElementById('bJump').innerHTML = [
         prevMiss != null ? `<button type="button" class="link-btn" data-jump="${prevMiss}">못 읽은 날 ${missed.length}일 · ${(() => { const x = dateIn(tp, prevMiss); return `${x.getMonth() + 1}월 ${x.getDate()}일`; })()}로 가기</button>` : '',
         isToday ? '' : '<button type="button" class="link-btn" id="bToday">오늘 읽기로</button>',
+        !st && missed.length > 30 ? '<button type="button" class="link-btn" id="bStartHint">중간에 시작했다면 시작일 바꾸기</button>' : '',
       ].join('');
     };
     paint();
     document.getElementById('bJump').addEventListener('click', (e) => {
       const j = e.target.closest('[data-jump]');
       if (e.target.closest('#bToday')) { bibleDate = null; viewBible(); return; }
+      if (e.target.closest('#bStartHint')) { pickStart(); return; }
       if (!j) return;
       const nd = dateIn(tp, Number(j.dataset.jump));
       bibleDate = ymd(nd) === ymd(today) ? null : nd; window.scrollTo(0, 0); viewBible();

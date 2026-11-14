@@ -858,11 +858,11 @@ async function remindRun(env) {
 async function pushRun(env) {
   const pending = await pushNextJob(env);
   if (pending) return { status: 'ok', result: pending };
-  const rem = await remindRun(env).catch(() => ({ reminded: 0 }));
+  const rem = await remindRun(env).catch((e) => ({ reminded: 0, err: String(e).slice(0, 120) }));
   if (rem.reminded) return { status: 'ok', result: { ...rem, more: true } }; // 새 글 확인은 다음 호출에서 (바깥 요청 수 한도 때문)
   const now = Date.now();
   const last = Number(await env.CAL.get('push:lastRun')) || 0;
-  if (now - last < PUSH_GAP - 60e3) return { status: 'ok', result: { skip: true, nextInMin: Math.ceil((last + PUSH_GAP - now) / 60e3) } };
+  if (now - last < PUSH_GAP - 60e3) return { status: 'ok', result: { skip: true, nextInMin: Math.ceil((last + PUSH_GAP - now) / 60e3), ...(rem.err ? { remindErr: rem.err } : {}) } };
   await env.CAL.put('push:lastRun', String(now));
   const reader = await env.CAL.get('push:reader');
   const found = [];

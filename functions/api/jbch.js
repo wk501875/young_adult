@@ -24,6 +24,8 @@ const APIS = {
   board_upload:  { path: '/in/boardb_upload_json.php', needHash: true },  // multipart 전용
   comment:       { path: '/in/boardb_pro_json.php', needHash: true },    // 댓글 달기·지우기 (mode)
   schedule:      { path: '/ex/church_schedule.php' },                   // 교회 일정 (청년회 부서)
+  bible:         { path: '/in/load_bible.php' },                     // 토브성경 본문 조회·검색 (bCode·eCode·langCode)
+  memory:        { path: '/ex/bible_memory.php' },                   // 우리 교회 이번 주 암송 구절 (chId)
 };
 
 const json = (o) =>

@@ -2837,7 +2837,7 @@
   function refLabel(s, short = false) {
     const [b, spec] = String(s).split(' ');
     const name = (BOOKS[Number(b)] || [])[short ? 1 : 0] || '';
-    return `${name} ${spec.replace(/-/g, '–').replace(/,/g, ', ')}${spec.includes(':') ? '' : '장'}`;
+    return `${name} ${spec.replace(/-/g, '–').replace(/,/g, ', ')}${spec.includes(':') ? '' : Number(b) === 19 ? '편' : '장'}`; // 시편은 '편'
   }
   const passageCache = new Map();
   async function loadPassage(s) {
@@ -2952,7 +2952,7 @@
       const multi = new Set(verses.map((v) => `${v.book}:${v.chapter}`)).size > 1;
       $b.innerHTML = `<div class="btext">${verses.map((v) => {
         const ch = `${v.book}:${v.chapter}`;
-        const h = multi && ch !== lastCh ? `<h4>${esc(v.bookname || '')} ${esc(v.chapter)}장</h4>` : '';
+        const h = multi && ch !== lastCh ? `<h4>${esc(v.bookname || '')} ${esc(v.chapter)}${Number(v.book) === 19 ? '편' : '장'}</h4>` : '';
         lastCh = ch;
         return `${h}<p><sup>${esc(v.paragraph)}</sup>${esc(v.sentence)}</p>`;
       }).join('')}</div>

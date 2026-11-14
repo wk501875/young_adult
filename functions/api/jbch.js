@@ -155,6 +155,18 @@ async function reading(env, api, p, raw) {
   if (kv) return kv;
   const who = await whoAmI(env, p.hash);
   if (who.error) return who.error;
+  // 자유롭게 읽기: 성경 1189장마다 읽음 '0'/'1' (rf:아이디, 연도와 상관없이 쌓임)
+  if (api === 'rf_get' || api === 'rf_set') {
+    const fkey = `rf:${who.u.userid}`;
+    let fm = ((await env.CAL.get(fkey)) || '').padEnd(1189, '0').slice(0, 1189);
+    if (api === 'rf_set') {
+      const i = Number(raw.idx);
+      if (!Number.isInteger(i) || i < 0 || i > 1188) return { status: 'error', result: '장을 확인해 주세요' };
+      fm = fm.slice(0, i) + (raw.on ? '1' : '0') + fm.slice(i + 1);
+      await env.CAL.put(fkey, fm);
+    }
+    return { status: 'ok', result: fm };
+  }
   const year = String(raw.year || '');
   if (!/^20\d\d$/.test(year)) return { status: 'error', result: '연도를 확인해 주세요' };
   const key = `rd:${who.u.userid}:${year}`;
@@ -812,7 +824,7 @@ export async function onRequestPost({ request, env }) {
   if (/^push_/.test(api)) return json(await push(env, api, clean, params || {}));
   if (/^avatar_/.test(api)) return json(await avatars(env, api, clean, params || {}));
   if (/^tpl_/.test(api)) return json(await templates(env, api, clean, params || {}));
-  if (/^rd_/.test(api)) return json(await reading(env, api, clean, params || {}));
+  if (/^r[df]_/.test(api)) return json(await reading(env, api, clean, params || {}));
   if (/^bg_/.test(api)) {
     if (!clean.hash) return json({ status: 'error', result: 'hash가 필요합니다' });
     return json(await meetup(env, api, clean, params || {}));

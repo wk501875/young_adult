@@ -150,36 +150,87 @@ async function avatars(env, api, p, raw) {
 /* ═══ 성경읽기 (맥체인) 체크 ══════════════════════
  * rd:아이디:연도  = 365일 × 4곳을 '0'/'1' 1460글자로 (어느 기기에서든 같은 체크)
  * rdc:날짜:아이디 = 그날 네 곳을 다 읽은 사람 (몇 명이 읽었는지만 셈, 3일 뒤 자동 삭제) */
+// 읽기표 값: {m: '0101…', t: 고친 시각(ms)} — 예전 글자만 저장된 것도 읽기 (t=0)
+function readMarks(v, len) {
+  let o = { m: '', t: 0 };
+  if (v) { try { const j = JSON.parse(v); if (j && typeof j.m === 'string') o = { m: j.m, t: Number(j.t) || 0 }; else o.m = String(v); } catch { o.m = String(v); } }
+  o.m = o.m.padEnd(len, '0').slice(0, len);
+  return o;
+}
+// 맥체인 몇째 날인지 (앱의 planDay 와 같게: 1월 1일 = 0, 윤년 2월 29일은 28일과 같게)
+function planDayOf(date) {
+  const [y, mo, d] = date.split('-').map(Number);
+  let n = Math.round((Date.UTC(y, mo - 1, d) - Date.UTC(y, 0, 1)) / 86400e3);
+  const leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+  if (leap && n >= 59) n -= 1;
+  return Math.min(Math.max(n, 0), 364);
+}
+// 읽기표는 아이디만 알면 됨 → 로그인 확인 결과를 잠깐 기억해서 체크가 빠르게 (hash 자체는 저장하지 않고 지문만)
+async function readerId(env, hash) {
+  if (!hash) return { error: { status: 'error', result: '로그인이 필요해요' } };
+  const dg = [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(hash))))].map((b) => b.toString(16).padStart(2, '0')).join('');
+  const ck = `rdw:${dg}`;
+  const hit = await env.CAL.get(ck);
+  if (hit) return { id: hit };
+  const m = await me(env, { hash });
+  if (m.status !== 'ok') return { error: m };
+  const id = m.result.userid;
+  await env.CAL.put(ck, id, { expirationTtl: 1800 });
+  return { id };
+}
+
 async function reading(env, api, p, raw) {
   const kv = needKV(env);
   if (kv) return kv;
-  const who = await whoAmI(env, p.hash);
-  if (who.error) return who.error;
+  const r = await readerId(env, p.hash);
+  if (r.error) return r.error;
+  const who = { u: { userid: r.id } };
+  // 새 방식: 앱이 읽기표를 통째로 보냄(빠르게 여러 번 눌러도 마지막 상태 그대로). 더 늦게 고친 것만 받음
+  if (api === 'rf_put' || api === 'rd_put') {
+    const isRf = api === 'rf_put', len = isRf ? 1189 : 1460;
+    const year = String(raw.year || '');
+    if (!isRf && !/^20\d\d$/.test(year)) return { status: 'error', result: '연도를 확인해 주세요' };
+    const m = String(raw.marks || ''), t = Number(raw.t) || Date.now();
+    if (!new RegExp(`^[01]{${len}}$`).test(m)) return { status: 'error', result: '읽기 기록을 확인해 주세요' };
+    const key = isRf ? `rf:${who.u.userid}` : `rd:${who.u.userid}:${year}`;
+    const cur = readMarks(await env.CAL.get(key), len);
+    if (t >= cur.t) await env.CAL.put(key, JSON.stringify({ m, t }));
+    let doneToday;
+    const date = String(raw.date || '');
+    if (!isRf && /^\d{4}-\d\d-\d\d$/.test(date) && date.startsWith(year)) {
+      const day = planDayOf(date), ck = `rdc:${date}:${who.u.userid}`;
+      if (m.slice(day * 4, day * 4 + 4) === '1111') await env.CAL.put(ck, '1', { expirationTtl: 3 * 86400 }); else await env.CAL.delete(ck);
+      doneToday = (await env.CAL.list({ prefix: `rdc:${date}:` })).keys.length;
+    }
+    return { status: 'ok', t: Math.max(t, cur.t), doneToday };
+  }
   // 자유롭게 읽기: 성경 1189장마다 읽음 '0'/'1' (rf:아이디, 연도와 상관없이 쌓임)
   if (api === 'rf_get' || api === 'rf_set') {
     const fkey = `rf:${who.u.userid}`;
-    let fm = ((await env.CAL.get(fkey)) || '').padEnd(1189, '0').slice(0, 1189);
+    const fo = readMarks(await env.CAL.get(fkey), 1189);
+    let fm = fo.m;
     if (api === 'rf_set') {
       const i = Number(raw.idx);
       if (!Number.isInteger(i) || i < 0 || i > 1188) return { status: 'error', result: '장을 확인해 주세요' };
       fm = fm.slice(0, i) + (raw.on ? '1' : '0') + fm.slice(i + 1);
-      await env.CAL.put(fkey, fm);
+      fo.t = Date.now();
+      await env.CAL.put(fkey, JSON.stringify({ m: fm, t: fo.t }));
     }
-    return { status: 'ok', result: fm };
+    return { status: 'ok', result: fm, t: fo.t };
   }
   const year = String(raw.year || '');
   if (!/^20\d\d$/.test(year)) return { status: 'error', result: '연도를 확인해 주세요' };
   const key = `rd:${who.u.userid}:${year}`;
-  let marks = (await env.CAL.get(key)) || '';
-  marks = marks.padEnd(1460, '0').slice(0, 1460);
+  const mo = readMarks(await env.CAL.get(key), 1460);
+  let marks = mo.m;
   const countToday = async (date) => (/^\d{4}-\d\d-\d\d$/.test(date) ? (await env.CAL.list({ prefix: `rdc:${date}:` })).keys.length : 0);
-  if (api === 'rd_get') return { status: 'ok', result: marks, doneToday: await countToday(String(raw.date || '')) };
+  if (api === 'rd_get') return { status: 'ok', result: marks, t: mo.t, doneToday: await countToday(String(raw.date || '')) };
   if (api === 'rd_set') {
     const day = Number(raw.day), idx = Number(raw.idx);
     if (!Number.isInteger(day) || day < 0 || day > 364 || !Number.isInteger(idx) || idx < 0 || idx > 3) return { status: 'error', result: '읽기 칸을 확인해 주세요' };
     const i = day * 4 + idx;
     marks = marks.slice(0, i) + (raw.on ? '1' : '0') + marks.slice(i + 1);
-    await env.CAL.put(key, marks);
+    await env.CAL.put(key, JSON.stringify({ m: marks, t: Date.now() }));
     const date = String(raw.date || '');
     if (/^\d{4}-\d\d-\d\d$/.test(date)) {
       const all = marks.slice(day * 4, day * 4 + 4) === '1111';

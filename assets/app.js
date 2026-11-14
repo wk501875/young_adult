@@ -315,7 +315,7 @@
    * 화면 (UI)
    * ════════════════════════════════════════════════════════════ */
   const APP = C.appName || '일산교회 청년회';
-  const APP_VERSION = '11.14-b'; // 내 정보 맨 아래에 보임 (휴대폰이 새 버전을 받았는지 확인용)
+  const APP_VERSION = '11.14-c'; // 내 정보 맨 아래에 보임 (휴대폰이 새 버전을 받았는지 확인용)
   // 화면 밝기 (기본: 밝게)
   const darkMQ = window.matchMedia('(prefers-color-scheme: dark)');
   function applyTheme() {
@@ -2848,13 +2848,66 @@
     if (verses.length) passageCache.set(s, verses);
     return verses;
   }
-  // 읽음 체크: 365일 × 4곳 = '0'/'1' 1460글자 (기기에도 잠깐 기억해 두고 서버 것으로 맞춤)
-  let rdYear = 0, rdMarks = '', rdToday = 0;
-  const isMarked = (day, i) => rdMarks[day * 4 + i] === '1';
+  /* 읽음 기록 저장: 누르면 기기에 바로 저장 → 0.4초 모았다가 기록 '통째로' 서버에 보냄.
+   * (한 칸씩 보내면 빠르게 여러 번 누를 때 서버에서 서로 덮어써 체크가 풀렸음)
+   * 서버 것과 기기 것은 '나중에 고친 쪽'을 따름 → 다른 기기에서 읽은 것도 맞춰짐 */
+  const markBoxes = {};
+  function markBox(name, len, putApi, extra) {
+    const key = `${name}:${String(auth.me?.userid || '').toLowerCase()}`; // 계정마다 따로
+    if (markBoxes[key]) return markBoxes[key];
+    const saved = store.get(key, null);
+    const b = { m: String(saved?.m || '').padEnd(len, '0').slice(0, len), t: Number(saved?.t) || 0, dirty: !!saved?.dirty, loaded: false, busy: false, again: false, timer: 0, warned: false, onSaved: null };
+    const keep = () => store.set(key, { m: b.m, t: b.t, dirty: b.dirty });
+    b.set = (i, on) => {
+      b.m = b.m.slice(0, i) + (on ? '1' : '0') + b.m.slice(i + 1);
+      b.t = Math.max(Date.now(), b.t + 1); b.dirty = true; keep();
+      clearTimeout(b.timer); b.timer = setTimeout(b.flush, 400);
+    };
+    b.flush = async () => {
+      clearTimeout(b.timer);
+      if (!b.dirty) return;
+      if (b.busy) { b.again = true; return; }
+      b.busy = true;
+      const sent = b.t;
+      const r = await callApi(putApi, { ...extra(), marks: b.m, t: sent });
+      b.busy = false;
+      if (r.status === 'ok') {
+        if (b.t === sent) { b.dirty = false; keep(); }
+        b.warned = false;
+        b.onSaved?.(r);
+      } else if (!b.warned) { b.warned = true; toast(`읽음 기록을 서버에 아직 못 보냈어요(이 기기엔 저장됨). 다음에 다시 보낼게요`, { tone: 'error' }); }
+      if (b.again) { b.again = false; b.timer = setTimeout(b.flush, 400); }
+    };
+    // 서버 기록 받아오기: 서버 쪽이 더 나중에 고친 것일 때만 바꿈
+    b.pull = async (getApi, params = {}) => {
+      const r = await callApi(getApi, params);
+      if (r.status !== 'ok') return r;
+      const st = Number(r.t) || 0;
+      if (b.dirty && st <= b.t) b.flush(); // 아직 못 보낸 내 체크가 더 최신 → 보내기
+      else if (st >= b.t || (!b.t && !b.dirty)) { b.m = String(r.result || '').padEnd(len, '0').slice(0, len); b.t = st; b.dirty = false; keep(); }
+      b.loaded = true;
+      return r;
+    };
+    markBoxes[key] = b;
+    return b;
+  }
+  // 앱을 닫거나 다른 앱으로 넘어갈 때 기다리지 않고 바로 보내기
+  document.addEventListener('visibilitychange', () => { if (document.hidden) Object.values(markBoxes).forEach((b) => b.flush()); });
+  window.addEventListener('pagehide', () => Object.values(markBoxes).forEach((b) => b.flush()));
+
+  // 맥체인 읽음 체크: 365일 × 4곳 = '0'/'1' 1460글자 (연도마다)
+  let rdYear = 0, rdBox = null, rdToday = 0;
+  function useRdYear(y) {
+    const b = markBox(`rd:${y}`, 1460, 'rd_put', () => ({ year: String(y), date: ymd(new Date()) }));
+    if (b === rdBox) return;
+    rdYear = y; rdBox = b;
+    b.onSaved = (r) => { if (r.doneToday != null && ymd(new Date()).startsWith(String(y))) rdToday = r.doneToday; };
+  }
+  const isMarked = (day, i) => rdBox.m[day * 4 + i] === '1';
   function streakDays(today) {
     let day = planDay(today), n = 0;
-    if (rdMarks.slice(day * 4, day * 4 + 4) !== '1111') day -= 1; // 오늘 아직이면 어제부터 셈
-    while (day >= 0 && rdMarks.slice(day * 4, day * 4 + 4) === '1111') { n++; day--; }
+    if (rdBox.m.slice(day * 4, day * 4 + 4) !== '1111') day -= 1; // 오늘 아직이면 어제부터 셈
+    while (day >= 0 && rdBox.m.slice(day * 4, day * 4 + 4) === '1111') { n++; day--; }
     return n;
   }
   let bibleDate = null;
@@ -2876,22 +2929,10 @@
   const CHAPS = window.BIBLE_CHAPTERS || [];
   const chapBase = CHAPS.reduce((acc, n, i) => { acc[i] = i ? acc[i - 1] + (CHAPS[i - 1] || 0) : 0; return acc; }, []); // 책 b의 1장이 몇 번째 칸인지
   const chapIdx = (b, c) => chapBase[b] + c - 1;
-  let rfMarks = String(store.get('rf', '')).padEnd(1189, '0');
-  let rfLoaded = false;
-  const isChapRead = (b, c) => rfMarks[chapIdx(b, c)] === '1';
-  async function loadRf() {
-    const r = await callApi('rf_get');
-    if (r.status === 'ok') { rfMarks = String(r.result).padEnd(1189, '0'); rfLoaded = true; store.set('rf', rfMarks); }
-  }
-  async function setChapRead(b, c, on) {
-    const i = chapIdx(b, c), was = rfMarks[i];
-    rfMarks = rfMarks.slice(0, i) + (on ? '1' : '0') + rfMarks.slice(i + 1);
-    store.set('rf', rfMarks);
-    const r = await callApi('rf_set', { idx: i, on });
-    if (r.status !== 'ok') { rfMarks = rfMarks.slice(0, i) + was + rfMarks.slice(i + 1); store.set('rf', rfMarks); toast(`저장하지 못했어요: ${errText(r)}`, { tone: 'error' }); return false; }
-    rfMarks = String(r.result).padEnd(1189, '0'); store.set('rf', rfMarks);
-    return true;
-  }
+  const rf = () => markBox('rf', 1189, 'rf_put', () => ({}));
+  const isChapRead = (b, c) => rf().m[chapIdx(b, c)] === '1';
+  const loadRf = () => rf().pull('rf_get');
+  function setChapRead(b, c, on) { rf().set(chapIdx(b, c), on); return true; }
 
   // ── 성경 읽기 (자유롭게): 책 → 장 → 본문, 이전·다음 장, 장마다 읽음 체크 ──
   let readPos = store.get('readPos', null); // { b, c } 마지막으로 읽던 곳
@@ -2917,7 +2958,7 @@
       <section class="card bpick"><h2 class="bpick__h">구약</h2><div class="bbooks">${[...Array(39)].map((_, i) => bookBtn(i + 1)).join('')}</div></section>
       <section class="card bpick"><h2 class="bpick__h">신약</h2><div class="bbooks">${[...Array(27)].map((_, i) => bookBtn(i + 40)).join('')}</div></section>`;
     document.querySelectorAll('.bbooks').forEach((el) => { el.onclick = (e) => { const b = e.target.closest('[data-book]'); if (b) { readPick = Number(b.dataset.book); viewBibleRead(); } }; });
-    if (!rfLoaded) loadRf().then(() => { if (bibleTab === 'read' && !readPos && !readPick && location.hash.startsWith('#/bible')) viewBibleRead(); });
+    if (!rf().loaded) loadRf().then(() => { if (bibleTab === 'read' && !readPos && !readPick && location.hash.startsWith('#/bible')) viewBibleRead(); });
   }
   async function viewChapter(b, c) {
     readPos = { b, c }; store.set('readPos', readPos);
@@ -2957,7 +2998,7 @@
       paintDone();
       if (on && hasNext) { toast(`${BOOKS[b][1]} ${c}${unit} 읽음`); step(1); }
     };
-    if (!rfLoaded) loadRf().then(() => { if (readPos?.b === b && readPos?.c === c && document.getElementById('bChapDone')) paintDone(); });
+    if (!rf().loaded) loadRf().then(() => { if (readPos?.b === b && readPos?.c === c && document.getElementById('bChapDone')) paintDone(); });
     const verses = await loadPassage(`${b} ${c}`);
     const $t = document.getElementById('bChapText');
     if (!$t || readPos?.b !== b || readPos?.c !== c) return;
@@ -2968,17 +3009,17 @@
   // ── 내 현황: 맥체인 1년 달력 표 + 성경 66권 통독 진도 ──
   async function viewBibleStats() {
     const today = new Date(), y = today.getFullYear();
-    if (rdYear !== y) { rdYear = y; rdMarks = String(store.get(`rd:${y}`, '')).padEnd(1460, '0'); }
+    useRdYear(y);
     const draw = () => {
-      const total = (rdMarks.match(/1/g) || []).length;
-      const fullDays = [...Array(365)].filter((_, d) => rdMarks.slice(d * 4, d * 4 + 4) === '1111').length;
-      const chapRead = (rfMarks.match(/1/g) || []).length;
+      const total = (rdBox.m.match(/1/g) || []).length;
+      const fullDays = [...Array(365)].filter((_, d) => rdBox.m.slice(d * 4, d * 4 + 4) === '1111').length;
+      const chapRead = (rf().m.match(/1/g) || []).length;
       const months = [...Array(12)].map((_, m) => {
         const first = new Date(y, m, 1), days = new Date(y, m + 1, 0).getDate();
         const cells = [...Array(first.getDay())].map(() => '<span></span>');
         for (let dd = 1; dd <= days; dd++) {
           const dt = new Date(y, m, dd), pd = planDay(dt);
-          const n = (rdMarks.slice(pd * 4, pd * 4 + 4).match(/1/g) || []).length;
+          const n = (rdBox.m.slice(pd * 4, pd * 4 + 4).match(/1/g) || []).length;
           const fut = dt > today;
           cells.push(`<button type="button" class="hcell l${n}${fut ? ' is-fut' : ''}${ymd(dt) === ymd(today) ? ' is-today' : ''}" data-day="${ymd(dt)}" title="${m + 1}월 ${dd}일 · ${n}/4" aria-label="${m + 1}월 ${dd}일 ${n}곳 읽음"></button>`);
         }
@@ -3019,8 +3060,8 @@
       };
     };
     draw();
-    const [a] = await Promise.all([callApi('rd_get', { year: String(y), date: ymd(today) }), loadRf()]);
-    if (a.status === 'ok') { rdMarks = String(a.result).padEnd(1460, '0'); rdToday = a.doneToday || 0; store.set(`rd:${y}`, rdMarks); }
+    const [a] = await Promise.all([rdBox.pull('rd_get', { year: String(y), date: ymd(today) }), loadRf()]);
+    if (a.status === 'ok') rdToday = a.doneToday || 0;
     if (bibleTab === 'stats' && location.hash.startsWith('#/bible')) draw();
   }
 
@@ -3030,7 +3071,7 @@
     const today = new Date();
     const d = bibleDate || today;
     const y = d.getFullYear(), day = planDay(d), isToday = ymd(d) === ymd(today);
-    if (rdYear !== y) { rdYear = y; rdMarks = String(store.get(`rd:${y}`, '')).padEnd(1460, '0'); }
+    useRdYear(y);
     const refs = PLAN[day] || [];
     const readItem = (s, i) => `<li class="bread${isMarked(day, i) ? ' is-done' : ''}" data-i="${i}">
         <div class="bread__row">
@@ -3062,9 +3103,9 @@
       });
       const $c = document.getElementById('bCount');
       if (!$c) return;
-      $c.textContent = done === 4 ? '오늘 분량을 다 읽었어요' : `${done} / 4곳 읽음`;
+      $c.textContent = done === 4 ? (isToday ? '오늘 분량을 다 읽었어요' : '이날 분량을 다 읽었어요') : `${done} / 4곳 읽음`;
       document.getElementById('bBar').style.width = `${done * 25}%`;
-      const total = (rdMarks.match(/1/g) || []).length;
+      const total = (rdBox.m.match(/1/g) || []).length;
       const streak = streakDays(today);
       document.getElementById('bstats').innerHTML = `
         <div class="bstat"><b>${streak}일</b><small>연속으로 다 읽음</small></div>
@@ -3072,11 +3113,10 @@
         <div class="bstat"><b>${rdToday}명</b><small>오늘 청년회에서 다 읽은 사람</small></div>`;
     };
     paint();
-    callApi('rd_get', { year: String(y), date: ymd(today) }).then((r) => {
+    rdBox.pull('rd_get', { year: String(y), date: ymd(today) }).then((r) => {
       if (r.status !== 'ok' || rdYear !== y) return;
-      rdMarks = String(r.result).padEnd(1460, '0'); rdToday = r.doneToday || 0;
-      store.set(`rd:${y}`, rdMarks);
-      paint();
+      if (y === today.getFullYear()) rdToday = r.doneToday || 0;
+      if (document.getElementById('breads')) paint();
     });
     // 이번 주 암송 (우리 교회 진도 · 듣기)
     callApi('memory', { chId: String(C.board.chId), lang: 'kor' }).then((m) => {
@@ -3094,15 +3134,12 @@
         if (audio.paused) { audio.play().catch(() => toast('듣기를 시작하지 못했어요', { tone: 'error' })); b.innerHTML = `${icon('pause')}멈춤`; } else { audio.pause(); b.innerHTML = `${icon('play')}듣기`; }
       });
     });
-    const setMark = async (i, on) => {
-      const k = day * 4 + i, was = rdMarks[k];
-      rdMarks = rdMarks.slice(0, k) + (on ? '1' : '0') + rdMarks.slice(k + 1);
-      store.set(`rd:${y}`, rdMarks);
+    const box = rdBox;
+    box.onSaved = (r) => { if (r.doneToday != null) rdToday = r.doneToday; if (rdBox === box && document.getElementById('breads')) paint(); };
+    const setMark = (i, on) => {
+      box.set(day * 4 + i, on); // 기기에 바로 저장, 서버엔 잠깐 뒤 통째로
       paint();
       if (on && [0, 1, 2, 3].every((j) => isMarked(day, j))) toast(isToday ? '오늘 분량을 다 읽었어요. 수고했어요' : '이날 분량을 다 읽었어요');
-      const r = await callApi('rd_set', { year: String(y), day, idx: i, on, date: ymd(d) });
-      if (r.status !== 'ok') { rdMarks = rdMarks.slice(0, k) + was + rdMarks.slice(k + 1); paint(); toast(`저장하지 못했어요: ${errText(r)}`, { tone: 'error' }); return; }
-      if (rdYear === y) { rdMarks = String(r.result).padEnd(1460, '0'); if (isToday) rdToday = r.doneToday || 0; store.set(`rd:${y}`, rdMarks); paint(); }
     };
     const openRead = async (i) => {
       const li = document.querySelector(`#breads .bread[data-i="${i}"]`);
